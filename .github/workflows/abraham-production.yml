@@ -1,0 +1,117 @@
+name: Abraham V5.6 Production
+
+on:
+  schedule:
+    - cron: "0 0,3,6,9,12,15,18,21 * * *"
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: "Allow a bootstrap artifact to initialize cloud state"
+        required: false
+        default: "false"
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: abraham-production
+  cancel-in-progress: false
+
+jobs:
+  production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ABRAHAM_DB_PATH: state/abraham.db
+      ABRAHAM_VAULT_PATH: state/vault
+      ABRAHAM_REPORT_DIR: state/reports
+      ABRAHAM_KOREAN_CACHE_PATH: state/korean_presentation_cache_v50.json
+      ABRAHAM_LOG_DIR: state/logs
+      ABRAHAM_BACKUP_PATH: state/backups
+      ABRAHAM_SCHEDULE_KST: "00:00,03:00,06:00,09:00,12:00,15:00,18:00,21:00"
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ABRAHAM_STATE_KEY: ${{ secrets.ABRAHAM_STATE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Restore latest successful state artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf state .restore
+          mkdir -p state .restore
+          RUN_ID="$(gh run list --workflow abraham-production.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          if [ -n "$RUN_ID" ]; then
+            echo "Restoring state from successful run $RUN_ID"
+            gh run download "$RUN_ID" -n abraham-state -D .restore
+          else
+            echo "No previous successful production state found."
+          fi
+
+          ARCHIVE="$(find .restore -maxdepth 2 -type f -name '*.tar.gz.enc' | head -n 1 || true)"
+          if [ -n "$ARCHIVE" ]; then
+            python abraham_cloud_state.py unpack --archive "$ARCHIVE"
+            python abraham_cloud_state.py verify
+          elif [ "${{ inputs.bootstrap }}" = "true" ]; then
+            echo "Bootstrap requested, but bootstrap artifact upload is not available from this workflow."
+            echo "Provide an initial encrypted state artifact before enabling scheduled execution."
+            exit 2
+          else
+            echo "No cloud state exists yet. This run is intentionally blocked until bootstrap."
+            exit 2
+          fi
+
+      - name: Validate restored SQLite
+        run: |
+          python - <<'PY'
+          import sqlite3
+          db = sqlite3.connect("state/abraham.db")
+          tables = {r[0] for r in db.execute("select name from sqlite_master where type='table'")}
+          required = {"documents", "document_stages"}
+          missing = required - tables
+          if missing:
+              raise SystemExit(f"Missing required SQLite tables: {sorted(missing)}")
+          print("SQLite tables:", sorted(tables))
+          PY
+
+      - name: Run Abraham V5.6
+        run: python run_v560_storage.py --apply --limit 900
+
+      - name: Package persistent state
+        run: |
+          rm -f abraham-state.tar.gz.enc
+          python abraham_cloud_state.py pack --archive abraham-state.tar.gz.enc
+          ls -lh abraham-state.tar.gz.enc
+
+      - name: Upload persistent state
+        uses: actions/upload-artifact@v4
+        with:
+          name: abraham-state
+          path: abraham-state.tar.gz.enc
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Upload run diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: abraham-production-report
+          path: |
+            state/reports/*.json
+            state/logs/*.log
+          retention-days: 14
+          if-no-files-found: ignore
