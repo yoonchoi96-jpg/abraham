@@ -33,6 +33,7 @@ jobs:
       ABRAHAM_SCHEDULE_KST: "00:00,03:00,06:00,09:00,12:00,15:00,18:00,21:00"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       ABRAHAM_STATE_KEY: ${{ secrets.ABRAHAM_STATE_KEY }}
+      READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
 
     steps:
       - name: Checkout
@@ -87,6 +88,9 @@ jobs:
               raise SystemExit(f"Missing required SQLite tables: {sorted(missing)}")
           print("SQLite tables:", sorted(tables))
           PY
+
+      - name: Sync Readwise Reader
+        run: python abraham_readwise.py
 
       - name: Run Abraham V5.6
         run: python run_v560_storage.py --apply --limit 900
