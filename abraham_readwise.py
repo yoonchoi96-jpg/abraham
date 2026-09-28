@@ -32,7 +32,7 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 def _canonical_text(item: dict[str, Any]) -> str:
-    for key in ("html", "summary", "source_url", "notes"):
+    for key in ("html_content", "html", "summary", "notes"):
         value = item.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -134,7 +134,7 @@ def sync_readwise() -> dict[str, Any]:
         columns = _columns(conn)
         _ensure_meta(conn)
         cursor = _get_meta(conn, "readwise_next_page_cursor")
-        params: dict[str, Any] = {"page_size": DEFAULT_PAGE_SIZE}
+        params: dict[str, Any] = {"limit": DEFAULT_PAGE_SIZE, "withHtmlContent": "true"}
         if cursor:
             params["pageCursor"] = cursor
         else:
@@ -170,7 +170,7 @@ def sync_readwise() -> dict[str, Any]:
             next_cursor = payload.get("nextPageCursor")
             if not next_cursor:
                 break
-            params = {"page_size": DEFAULT_PAGE_SIZE, "pageCursor": next_cursor}
+            params = {"limit": DEFAULT_PAGE_SIZE, "withHtmlContent": "true", "pageCursor": next_cursor}
 
         _set_meta(conn, "readwise_last_sync_at", sync_started_at)
         _set_meta(conn, "readwise_next_page_cursor", "")
