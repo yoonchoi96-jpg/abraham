@@ -5,11 +5,6 @@ on:
     - cron: "0 0,3,6,9,12,15,18,21 * * *"
   workflow_dispatch:
     inputs:
-      bootstrap:
-        description: "Allow a bootstrap artifact to initialize cloud state"
-        required: false
-        default: "false"
-        type: boolean
 
 permissions:
   contents: read
@@ -59,20 +54,23 @@ jobs:
           if [ -n "$RUN_ID" ]; then
             echo "Restoring state from successful run $RUN_ID"
             gh run download "$RUN_ID" -n abraham-state -D .restore
-          else
-            echo "No previous successful production state found."
           fi
 
           ARCHIVE="$(find .restore -maxdepth 2 -type f -name '*.tar.gz.enc' | head -n 1 || true)"
+          if [ -z "$ARCHIVE" ]; then
+            echo "No successful production artifact found; trying the one-time bootstrap release."
+            gh release download v5.6-state-bootstrap \
+              --repo "${{ github.repository }}" \
+              --pattern 'abraham-state-bootstrap.tar.gz.enc' \
+              --dir .restore
+            ARCHIVE="$(find .restore -maxdepth 2 -type f -name 'abraham-state-bootstrap.tar.gz.enc' | head -n 1 || true)"
+          fi
+
           if [ -n "$ARCHIVE" ]; then
             python abraham_cloud_state.py unpack --archive "$ARCHIVE"
             python abraham_cloud_state.py verify
-          elif [ "${{ inputs.bootstrap }}" = "true" ]; then
-            echo "Bootstrap requested, but bootstrap artifact upload is not available from this workflow."
-            echo "Provide an initial encrypted state artifact before enabling scheduled execution."
-            exit 2
           else
-            echo "No cloud state exists yet. This run is intentionally blocked until bootstrap."
+            echo "No cloud state is available."
             exit 2
           fi
 
