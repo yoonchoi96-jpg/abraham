@@ -129,6 +129,7 @@ def sync_readwise() -> dict[str, Any]:
     if not db.exists():
         raise FileNotFoundError(f"SQLite database not found: {db}")
 
+    sync_started_at = _utc_now()
     with sqlite3.connect(db) as conn:
         columns = _columns(conn)
         _ensure_meta(conn)
@@ -171,7 +172,7 @@ def sync_readwise() -> dict[str, Any]:
                 break
             params = {"page_size": DEFAULT_PAGE_SIZE, "pageCursor": next_cursor}
 
-        _set_meta(conn, "readwise_last_sync_at", _utc_now())
+        _set_meta(conn, "readwise_last_sync_at", sync_started_at)
         _set_meta(conn, "readwise_next_page_cursor", "")
         conn.commit()
 
