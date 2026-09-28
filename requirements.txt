@@ -1,0 +1,3 @@
+google-genai
+python-frontmatter==1.3.0
+python-dotenv

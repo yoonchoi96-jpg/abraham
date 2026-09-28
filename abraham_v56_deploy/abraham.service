@@ -1,0 +1,17 @@
+[Unit]
+Description=Abraham V5.6 knowledge pipeline
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=abraham
+Group=abraham
+WorkingDirectory=/opt/abraham/app
+EnvironmentFile=/opt/abraham/.env
+ExecStart=/opt/abraham/venv/bin/python /opt/abraham/app/run_v560_storage.py --apply
+TimeoutStartSec=45min
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
