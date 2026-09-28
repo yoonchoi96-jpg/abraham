@@ -17,6 +17,7 @@ STATE_PATHS = (
     "state/korean_presentation_cache_v50.json",
     "state/readwise",
     "state/reports",
+    "state/vault",
 )
 
 def _key() -> str:
@@ -37,7 +38,7 @@ def pack(output: Path) -> Path:
                 p = Path(rel)
                 if p.exists():
                     tar.add(p, arcname=rel)
-        _run(["openssl", "enc", "-aes-256-gcm", "-pbkdf2", "-salt",
+        _run(["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-salt",
               "-pass", f"env:{KEY_ENV}", "-in", str(raw), "-out", str(output)])
     return output
 
