@@ -37,7 +37,8 @@ jobs:
             run_v560_storage.py \
             abraham_sqlite.py \
             abraham_incremental.py \
-            abraham_storage.py
+            abraham_storage.py \
+            abraham_cloud_state.py
 
       - name: Validate CLI schedule
         run: python run_v560_storage.py --print-schedule
