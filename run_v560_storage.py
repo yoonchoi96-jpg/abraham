@@ -56,7 +56,7 @@ KOREAN_BATCH_SIZE = int(os.getenv("KOREAN_BATCH_SIZE", "20"))
 KOREAN_MAX_RETRIES = int(os.getenv("KOREAN_MAX_RETRIES", "3"))
 ABRAHAM_SCHEDULE_KST = os.getenv(
     "ABRAHAM_SCHEDULE_KST",
-    "00:00,03:00,06:00,09:00,12:00,15:00,18:00,21:00",
+    "00:00,09:00,17:00",
 )
 RUN_LOCK_PATH = REPORT_DIR / ".abraham_v5.lock"
 LOG_DIR = Path(os.getenv("ABRAHAM_LOG_DIR", str(REPORT_DIR / "logs"))).expanduser()
@@ -1891,7 +1891,7 @@ def main():
     parser.add_argument("--apply", action="store_true", help="Actually modify Obsidian files.")
     parser.add_argument("--limit", type=int, default=None, help="Process only the first N documents after cache filtering.")
     parser.add_argument("--readwise-id", action="append", default=None, help="Process only specified Readwise IDs. Can be repeated.")
-    parser.add_argument("--print-schedule", action="store_true", help="Print the configured 8-run KST schedule and exit.")
+    parser.add_argument("--print-schedule", action="store_true", help="Print the configured KST schedule and exit.")
     parser.add_argument("--storage-status", action="store_true", help="Show Abraham storage usage and exit.")
     parser.add_argument("--storage-maintenance", action="store_true", help="Run safe storage maintenance: compress old backups, prune old logs/reports/backups, and enforce disk thresholds.")
     args = parser.parse_args()
