@@ -678,214 +678,105 @@ def rate_documents(documents,args):
         raise
     return results,pending,skipped
 
+def _load_korean_stage_cache(documents):
+    results = {}
+    if not documents:
+        return results
+    ids = [
+        str(d.get("readwise_id") or d.get("document_id") or "").strip()
+        for d in documents
+    ]
+    ids = [x for x in ids if x]
+    if not ids:
+        return results
+    with connect_db() as conn:
+        ensure_schema(conn)
+        placeholders = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"""SELECT readwise_id, content_hash, result_json
+                FROM document_stages
+                WHERE stage='korean_translation'
+                  AND status='completed'
+                  AND readwise_id IN ({placeholders})""",
+            tuple(ids),
+        ).fetchall()
+    by_rid = {str(d.get("readwise_id")): d for d in documents}
+    for row in rows:
+        rid = str(row["readwise_id"])
+        document = by_rid.get(rid)
+        if not document or not row["result_json"]:
+            continue
+        expected_hash = content_hash(
+            document.get("content", ""),
+            document.get("canonical_text", ""),
+        )
+        if row["content_hash"] != expected_hash:
+            continue
+        try:
+            item = json.loads(row["result_json"])
+        except (TypeError, ValueError):
+            continue
+        if item.get("korean_title") and item.get("korean_text"):
+            item["document_id"] = document["document_id"]
+            item["readwise_id"] = rid
+            results[document["document_id"]] = item
+    return results
+
+
 def translate_documents_to_korean(
     documents,
     limit=None,
     allow_ai=True,
 ):
-    cache = load_korean_cache()
-    results = {}
-    pending = []
+    results = _load_korean_stage_cache(documents)
+    pending = [
+        d for d in documents
+        if d["document_id"] not in results
+    ]
 
-    for document in documents:
-        document_id = document["document_id"]
-        readwise_id = str(
-            document.get("readwise_id", "")
-        ).strip()
+    print("Korean SQLite cache :", len(results))
+    print("Korean to translate:", len(pending))
 
-        if not readwise_id:
-            raise RuntimeError(
-                "Missing readwise_id for document: "
-                + str(document.get("title", "(no title)"))
-            )
-
-        canonical = (
-            document.get("canonical_text")
-            or document.get("content")
-            or ""
-        )
-
-        cache_key = stable_text_hash(readwise_id, canonical, PROMPT_VERSION, MODEL)
-        cached = cache.get(cache_key)
-
-        if (
-            isinstance(cached, dict)
-            and cached.get("cache_key") == cache_key
-            and cached.get("korean_title")
-            and cached.get("korean_text")
-        ):
-            results[document_id] = cached
-        else:
-            pending.append(document)
-
-    print(
-        "Korean cache       :",
-        len(results),
-    )
-    print(
-        "Korean to translate:",
-        len(pending),
-    )
-
-    # --limit applies AFTER Korean cache filtering.
-    # Therefore --limit N means at most N uncached documents
-    # are sent to Gemini.
     if limit is not None:
         pending = pending[:limit]
-        print(
-            "Korean selected for Gemini:",
-            len(pending),
-        )
+        print("Korean selected for Gemini:", len(pending))
 
-    if not pending:
-        return results
-
-    if not allow_ai:
-        print("Korean AI skipped (dry-run)")
+    if not pending or not allow_ai:
+        if not pending:
+            print("Korean translation cache fully satisfied")
+        else:
+            print("Korean AI skipped (dry-run)")
         return results
 
     client = get_korean_client()
-
     batches = [
         pending[i:i + KOREAN_BATCH_SIZE]
-        for i in range(
-            0,
-            len(pending),
-            KOREAN_BATCH_SIZE,
-        )
+        for i in range(0, len(pending), KOREAN_BATCH_SIZE)
     ]
+    print("Korean batches     :", len(batches))
 
-    print(
-        "Korean batches     :",
-        len(batches),
-    )
-
-    for number, batch in enumerate(
-        batches,
-        1,
-    ):
-        translated = translate_korean_batch(
-            client,
-            batch,
-        )
-
+    for number, batch in enumerate(batches, 1):
+        translated = translate_korean_batch(client, batch)
         for item in translated:
-            document_id = item[
-                "document_id"
-            ]
-
             document = next(
-                d
-                for d in batch
-                if d["document_id"]
-                == document_id
+                d for d in batch
+                if d["document_id"] == item["document_id"]
             )
-
-            readwise_id = str(
-                document["readwise_id"]
-            ).strip()
-
-            canonical = (
-                document.get("canonical_text")
-                or document.get("content")
-                or ""
-            )
-
-            # Recompute the cache key for THIS document.
-
-
-            # The earlier cache_key belongs to the document scan loop
-
-
-            # and may refer to a different document.
-
-
-            document_cache_key = stable_text_hash(
-
-
-                readwise_id,
-
-
-                canonical,
-
-
-                PROMPT_VERSION,
-
-
-                MODEL,
-
-
-            )
-
-
-
-            cache_item = {
-
-
-                "document_id": document_id,
-
-
-                "readwise_id": readwise_id,
-
-
+            rid = str(document["readwise_id"]).strip()
+            canonical = document.get("canonical_text") or document.get("content") or ""
+            cache_key = stable_text_hash(rid, canonical, PROMPT_VERSION, MODEL)
+            results[item["document_id"]] = {
+                "document_id": item["document_id"],
+                "readwise_id": rid,
                 "canonical_text": canonical,
-
-
-                "korean_title": item[
-
-
-                    "korean_title"
-
-
-                ],
-
-
-                "korean_text": item[
-
-
-                    "korean_text"
-
-
-                ],
-
-
-                "translation_notes": item.get(
-
-
-                    "translation_notes",
-
-
-                    [],
-
-
-                ),
-
-
+                "korean_title": item["korean_title"],
+                "korean_text": item["korean_text"],
+                "translation_notes": item.get("translation_notes", []),
                 "prompt_version": PROMPT_VERSION,
-
-
                 "model": MODEL,
-
-
-                "cache_key": document_cache_key,
-
-
+                "cache_key": cache_key,
             }
-
-
-            results[document_id] = cache_item
-
-
-            cache[document_cache_key] = cache_item
-
-        save_korean_cache(cache)
-
-        print(
-            f"[KOREAN {number}/"
-            f"{len(batches)}] "
-            f"batch complete "
-            f"({len(translated)} docs)"
-        )
+        print(f"[KOREAN {number}/{len(batches)}] batch complete ({len(translated)} docs)")
 
     return results
 
