@@ -35,7 +35,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
 
       - name: Install Obsidian Headless
         run: npm install --global obsidian-headless
@@ -83,10 +82,12 @@ jobs:
           OBSIDIAN_SYNC_PASSWORD: ${{ secrets.OBSIDIAN_SYNC_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ -n "${OBSIDIAN_SYNC_PASSWORD}" ]; then
-            ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions" --password "${OBSIDIAN_SYNC_PASSWORD}" || true
-          else
-            ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions" || true
+          if ! ob sync-status --path "${GITHUB_WORKSPACE}/vault" >/dev/null 2>&1; then
+            if [ -n "${OBSIDIAN_SYNC_PASSWORD}" ]; then
+              ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions" --password "${OBSIDIAN_SYNC_PASSWORD}"
+            else
+              ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions"
+            fi
           fi
           ob sync-config --path "${GITHUB_WORKSPACE}/vault" --mode bidirectional --conflict-strategy merge
           ob sync --path "${GITHUB_WORKSPACE}/vault"
