@@ -533,6 +533,7 @@ def translate_korean_batch(
 def translate_documents_to_korean(
     documents,
     limit=None,
+    allow_ai=True,
 ):
     cache = load_korean_cache()
     results = {}
@@ -589,6 +590,10 @@ def translate_documents_to_korean(
         )
 
     if not pending:
+        return results
+
+    if not allow_ai:
+        print("Korean AI skipped (dry-run)")
         return results
 
     client = get_korean_client()
@@ -1613,7 +1618,11 @@ def run_pipeline(args):
             mark_started(stage_conn, korean_pending, korean_stage, worker_id="abraham-v5.6")
 
         try:
-            korean_results = translate_documents_to_korean(korean_pending, limit=None)
+            korean_results = translate_documents_to_korean(
+                korean_pending,
+                limit=None,
+                allow_ai=args.apply,
+            )
         except Exception as exc:
             if args.apply and korean_pending:
                 mark_failed(stage_conn, korean_pending, korean_stage, exc)
@@ -1622,9 +1631,24 @@ def run_pipeline(args):
         # Existing cached translations are needed for render-stage evaluation.
         # Fetch them by running the cache resolver over the full snapshot; this
         # does not invoke Gemini for unchanged documents.
-        all_korean_results = translate_documents_to_korean(documents, limit=0)
+        all_korean_results = translate_documents_to_korean(
+            documents,
+            limit=0,
+            allow_ai=False,
+        )
         all_korean_results.update(korean_results)
         if args.apply and korean_pending:
+            translated_ids = set(korean_results)
+            pending_ids = {d["document_id"] for d in korean_pending}
+            missing_ids = pending_ids - translated_ids
+            if missing_ids:
+                failed_docs = [d for d in korean_pending if d["document_id"] in missing_ids]
+                error = RuntimeError(
+                    "Korean translation incomplete; "
+                    f"missing {len(missing_ids)} document(s)"
+                )
+                mark_failed(stage_conn, failed_docs, korean_stage, error)
+                raise error
             mark_completed(stage_conn, korean_pending, korean_stage, korean_results)
 
     # ------------------------------------------------------------
