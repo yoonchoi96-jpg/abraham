@@ -31,6 +31,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set up Node.js for Obsidian Headless
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Obsidian Headless
+        run: npm install --global obsidian-headless
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -52,10 +61,35 @@ jobs:
             exit 1
           fi
 
+      - name: Validate Obsidian Sync configuration
+        env:
+          OBSIDIAN_AUTH_TOKEN: ${{ secrets.OBSIDIAN_AUTH_TOKEN }}
+          OBSIDIAN_VAULT_NAME: ${{ secrets.OBSIDIAN_VAULT_NAME }}
+        run: |
+          set -euo pipefail
+          test -n "${OBSIDIAN_AUTH_TOKEN}"
+          test -n "${OBSIDIAN_VAULT_NAME}"
+          echo "Obsidian Headless configured for remote vault."
+
       - name: Prepare runtime directories
         run: |
           mkdir -p data vault 90_Dashboard/auto_reports
           rm -f data/readwise_pipeline.db
+
+      - name: Restore Obsidian Sync vault
+        env:
+          OBSIDIAN_AUTH_TOKEN: ${{ secrets.OBSIDIAN_AUTH_TOKEN }}
+          OBSIDIAN_VAULT_NAME: ${{ secrets.OBSIDIAN_VAULT_NAME }}
+          OBSIDIAN_SYNC_PASSWORD: ${{ secrets.OBSIDIAN_SYNC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${OBSIDIAN_SYNC_PASSWORD}" ]; then
+            ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions" --password "${OBSIDIAN_SYNC_PASSWORD}" || true
+          else
+            ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions" || true
+          fi
+          ob sync-config --path "${GITHUB_WORKSPACE}/vault" --mode bidirectional --conflict-strategy merge
+          ob sync --path "${GITHUB_WORKSPACE}/vault"
 
       - name: Restore persistent SQLite state
         env:
@@ -113,13 +147,20 @@ PY
           if [ -z "${limit}" ]; then limit="10"; fi
           python run_v560_storage.py --apply --limit "${limit}"
 
-      - name: Commit vault and reports
+      - name: Push generated vault changes to Obsidian Sync
+        env:
+          OBSIDIAN_AUTH_TOKEN: ${{ secrets.OBSIDIAN_AUTH_TOKEN }}
+          OBSIDIAN_VAULT_NAME: ${{ secrets.OBSIDIAN_VAULT_NAME }}
+          OBSIDIAN_SYNC_PASSWORD: ${{ secrets.OBSIDIAN_SYNC_PASSWORD }}
         run: |
-          git config user.name "Abraham Bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add vault/ 90_Dashboard/auto_reports/
-          git diff --cached --quiet || git commit -m "Abraham pipeline run"
-          git push
+          set -euo pipefail
+          if [ -n "${OBSIDIAN_SYNC_PASSWORD}" ]; then
+            ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions" --password "${OBSIDIAN_SYNC_PASSWORD}" || true
+          else
+            ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions" || true
+          fi
+          ob sync-config --path "${GITHUB_WORKSPACE}/vault" --mode bidirectional --conflict-strategy merge
+          ob sync --path "${GITHUB_WORKSPACE}/vault"
 
       - name: Refresh persistent SQLite release
         env:
