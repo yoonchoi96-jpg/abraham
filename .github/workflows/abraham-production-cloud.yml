@@ -123,7 +123,7 @@ jobs:
       - name: Run V6-V8 intelligence
         env:
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
-        run: python run_v6_v8.py --mode autonomous --limit 1000
+        run: python run_v6_v8.py --mode autonomous --limit 250
 
       - name: Validate final SQLite state
         run: python scripts/verify_state.py --db data/readwise_pipeline.db
