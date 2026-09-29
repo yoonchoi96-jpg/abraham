@@ -136,7 +136,6 @@ PY
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
           ABRAHAM_VAULT_PATH: ${{ github.workspace }}/vault
           ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
-          ABRAHAM_KOREAN_CACHE_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/korean_presentation_cache_v50.json
           ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
           ABRAHAM_SCHEDULE_KST: "00:00,09:00,17:00"
