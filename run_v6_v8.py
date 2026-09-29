@@ -13,7 +13,11 @@ def main():
  elif a.mode=="search":
   if not a.query: raise SystemExit("--query required")
   out={"query":a.query,"results":search(c,a.query,a.limit)}
- elif a.mode=="research":\n  if not a.question: raise SystemExit("--question required")\n  from v7_research import run_research\n  out={"v7":run_research(c,a.question,a.limit)}\n elif a.mode=="autonomous": out={"v6":index_documents(c,docs),"v8":detect(c,docs,a.limit)}
+ elif a.mode=="research":
+  if not a.question: raise SystemExit("--question required")
+  from v7_research import run_research
+  out={"v7":run_research(c,a.question,a.limit)}
+ elif a.mode=="autonomous": out={"v6":index_documents(c,docs),"v8":detect(c,docs,a.limit)}
  else: out={t:c.execute("SELECT COUNT(*) FROM "+t).fetchone()[0] for t in ("v6_vectors","v7_research_runs","v8_events","v8_insights")}
  print(json.dumps(out,ensure_ascii=False)); c.close()
 if __name__=="__main__": main()
