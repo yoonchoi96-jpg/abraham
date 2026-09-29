@@ -1314,93 +1314,46 @@ def render_entity(
 
 
 
-# V5 source-of-truth boundary: document content comes from SQLite only.
-# The legacy Readwise export/source-cache layer was removed in V5.5.
-
-# Cached once per process: Readwise ID -> existing Markdown path.
-_EXISTING_READWISE_PATH_INDEX = None
-
-
-def _build_existing_readwise_path_index():
-    global _EXISTING_READWISE_PATH_INDEX
-
-    if _EXISTING_READWISE_PATH_INDEX is not None:
-        return _EXISTING_READWISE_PATH_INDEX
-
-    index = {}
-
+# V5 source-of-truth boundary: document content and output identity come from SQLite stage state.
+# No recursive vault scan is used. The document_render stage persists its last output path.
+def _stage_output_path(document: dict) -> Path | None:
+    rid = str(document.get("readwise_id") or document.get("document_id") or "").strip()
+    if not rid:
+        return None
     try:
-        import frontmatter
-
-        for candidate in DOCUMENT_INBOX.rglob("*.md"):
-            try:
-                post = frontmatter.load(candidate)
-                readwise_id = str(
-                    post.metadata.get("readwise_id", "")
-                ).strip()
-
-                if readwise_id and readwise_id not in index:
-                    index[readwise_id] = candidate
-
-            except Exception:
-                continue
-
-    except Exception:
-        pass
-
-    _EXISTING_READWISE_PATH_INDEX = index
-
-    print(
-        f"Existing document index built: {len(index)} Readwise IDs"
-    )
-
-    return index
+        with connect_db() as conn:
+            ensure_schema(conn)
+            row = conn.execute(
+                """SELECT result_json FROM document_stages
+                   WHERE readwise_id=? AND stage='document_render' AND status='completed'""",
+                (rid,),
+            ).fetchone()
+        if not row or not row["result_json"]:
+            return None
+        data = json.loads(row["result_json"])
+        raw = data.get("output_path")
+        if not raw:
+            return None
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = VAULT_PATH / candidate
+        return candidate
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def find_existing_document_path(document: dict) -> Path | None:
-    # ------------------------------------------------------------
-    # 1. Stable document identity: Readwise ID
-    # ------------------------------------------------------------
-    readwise_id = str(
-        document.get("readwise_id", "")
-    ).strip()
+    # 1. Persisted V5 path from SQLite stage metadata.
+    candidate = _stage_output_path(document)
+    if candidate is not None and candidate.exists():
+        return candidate
 
-    if readwise_id:
-        index = _build_existing_readwise_path_index()
-
-        candidate = index.get(readwise_id)
-
-        if candidate is not None and candidate.exists():
-            return candidate
-
-    # ------------------------------------------------------------
-    # 2. Existing path from the source document.
-    # ------------------------------------------------------------
-    original_path = document.get("path")
-
+    # 2. Explicit source path, when it is already valid in the current runtime.
+    original_path = str(document.get("path") or "").strip()
     if original_path:
         candidate = Path(original_path)
-
         if candidate.exists():
             return candidate
-
-    # ------------------------------------------------------------
-    # 3. V4.6.1: locate an already-renamed Korean file.
-    # ------------------------------------------------------------
-    korean_title = document.get(
-        "korean_title",
-        ""
-    )
-
-    if korean_title:
-        matches = list(
-            DOCUMENT_INBOX.rglob(
-                f"{safe_filename(korean_title)}.md"
-            )
-        )
-
-        if matches:
-            return matches[0]
 
     return None
 
