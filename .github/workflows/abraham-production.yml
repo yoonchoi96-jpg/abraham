@@ -38,6 +38,18 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Security gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          private=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.private')
+          if [ "${private}" != "true" ]; then
+            echo "Abraham persistent state is intentionally blocked while the repository is public."
+            echo "Make the repository private before enabling persistent SQLite/vault production runs."
+            exit 1
+          fi
+
       - name: Prepare runtime directories
         run: |
           mkdir -p data vault 90_Dashboard/auto_reports
