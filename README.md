@@ -39,6 +39,17 @@ CI compiles the production modules, runs unit tests for incremental state, and v
 
 See abraham_v56_deploy/README.md for the Linux/systemd deployment model, including the separate Obsidian headless-sync service.
 
+
+## Production state guard
+
+Production does not bootstrap a replacement SQLite database. If the rolling `state-current` Release Asset is missing, the production workflow fails closed. This prevents a test/smoke database from ever replacing the preserved V4.61 state.
+
+The first production state must be the validated V4.61 SQLite database from the freeze baseline. After that, each successful production run restores the state, incrementally syncs Readwise, processes changes, commits Vault/report output, and refreshes the rolling SQLite Release Asset.
+
+## Readwise ingestion
+
+`scripts/sync_readwise.py` incrementally imports new/updated Reader documents into the canonical SQLite database before V5.6 processing. It uses the Reader API's `updatedAfter` window with a small overlap and paginates up to the configured maximum, while preserving existing V4.61 canonical text on already-known documents.
+
 ## V4.61 state migration
 
 The canonical V4.61 SQLite database must be preserved as-is. Do not rebuild the 8,802-document state from Readwise API because that would lose the existing entity, relation, stage, and cache state.
