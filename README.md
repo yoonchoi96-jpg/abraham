@@ -92,3 +92,14 @@ Conflicting or unclassified color tags are quarantined: no rating, translation, 
 
 Existing SQLite ratings are adopted into the V5 rating stage without another Gemini call. Only rateable documents that lack a valid completed rating stage require the rating AI stage.
 
+
+## Cloud architecture
+
+- Readwise Reader is the document source.
+- GitHub Actions is the compute/orchestration layer.
+- SQLite state is persisted in the private `state-current` GitHub Release asset.
+- The Obsidian vault is **not** stored in the Git repository. The runner uses an ephemeral working copy and syncs it through official Obsidian Headless/Sync.
+- Mac/iPhone access is provided by native Obsidian Sync; the GitHub runner is a separate Headless Sync device.
+- Generated vault files are therefore not accumulated on the phone merely because Abraham processed more documents. Device-level Obsidian Sync selective-sync settings remain available for storage control.
+
+Obsidian Headless is currently an open-beta official client and requires Node.js 22+ and an active Obsidian Sync subscription. It supports one-shot CI synchronization and uses the same Sync encryption/privacy model as the desktop client. The GitHub Actions workflow uses a dedicated device name and serialized concurrency.
