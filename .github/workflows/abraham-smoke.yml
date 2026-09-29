@@ -26,7 +26,6 @@ jobs:
           ABRAHAM_DB_PATH: /tmp/readwise_pipeline.db
           ABRAHAM_VAULT_PATH: ${{ github.workspace }}/smoke_vault
           ABRAHAM_REPORT_DIR: ${{ github.workspace }}/smoke_reports
-          ABRAHAM_KOREAN_CACHE_PATH: ${{ github.workspace }}/smoke_reports/korean_cache.json
           ABRAHAM_LOG_DIR: ${{ github.workspace }}/smoke_reports/logs
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/smoke_reports/backups
           ABRAHAM_SCHEDULE_KST: "00:00,09:00,17:00"
