@@ -65,3 +65,6 @@ python scripts/prepare_v461_state.py \
 It copies the source without modifying it, runs `PRAGMA integrity_check`, and reports the baseline table counts.
 
 The prepared DB should then be uploaded as the initial `readwise_pipeline.db` asset of the private `state-current` GitHub Release. The production workflow subsequently restores and replaces this rolling state asset after each successful run.
+
+
+<!-- smoke validation: Reader-gated rating stage -->
