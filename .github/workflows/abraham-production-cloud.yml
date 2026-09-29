@@ -1,9 +1,6 @@
 name: Abraham V5.6 Production Cloud
 
 "on":
-  push:
-    paths:
-      - ".never-trigger-production"
   schedule:
     - cron: "0 0,8,15 * * *" # 09:00, 17:00, 00:00 KST
   workflow_dispatch:
