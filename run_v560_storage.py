@@ -29,7 +29,7 @@ from abraham_storage import storage_status, run_storage_maintenance
 
 
 VERSION = "5.6.0"
-PROMPT_VERSION = "5.6.0-korean-presentation"
+PROMPT_VERSION = "5.6.0-korean-presentation-sqlite"
 
 load_dotenv()
 
@@ -47,11 +47,6 @@ REPORT_DIR = Path(os.getenv(
     "ABRAHAM_REPORT_DIR",
     str(VAULT_PATH / "90_Dashboard" / "auto_reports"),
 )).expanduser()
-KOREAN_CACHE_PATH = Path(os.getenv(
-    "ABRAHAM_KOREAN_CACHE_PATH",
-    str(REPORT_DIR / "korean_presentation_cache_v50.json"),
-)).expanduser()
-
 KOREAN_BATCH_SIZE = int(os.getenv("KOREAN_BATCH_SIZE", "20"))
 KOREAN_MAX_RETRIES = int(os.getenv("KOREAN_MAX_RETRIES", "3"))
 ABRAHAM_SCHEDULE_KST = os.getenv(
@@ -143,44 +138,6 @@ def get_validated_relations(relations) -> list[dict]:
         and isinstance(x.get("object"), dict)
         and x.get("relation")
     ]
-
-
-def load_korean_cache():
-    if not KOREAN_CACHE_PATH.exists():
-        return {}
-
-    try:
-        with KOREAN_CACHE_PATH.open(
-            encoding="utf-8"
-        ) as f:
-            data = json.load(f)
-
-        return data if isinstance(data, dict) else {}
-
-    except Exception:
-        return {}
-
-
-def save_korean_cache(cache):
-    KOREAN_CACHE_PATH.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    tmp = KOREAN_CACHE_PATH.with_suffix(".tmp")
-
-    with tmp.open(
-        "w",
-        encoding="utf-8",
-    ) as f:
-        json.dump(
-            cache,
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )
-
-    tmp.replace(KOREAN_CACHE_PATH)
 
 
 def get_korean_client():
