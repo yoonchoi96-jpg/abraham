@@ -12,3 +12,6 @@ __pycache__/
 # Local runtime outputs
 90_Dashboard/auto_reports/logs/
 90_Dashboard/auto_reports/backups/
+
+# Obsidian vault is authoritative in Obsidian Sync; GitHub runner uses ephemeral working copy.
+vault/
