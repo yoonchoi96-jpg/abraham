@@ -77,8 +77,9 @@ PY
             gh api -H "Accept: application/octet-stream" "${asset_url}" > data/readwise_pipeline.db
             echo "Restored SQLite state from state-current"
           else
-            echo "No persistent state release found; bootstrapping a 10-document smoke-test database."
-            python scripts/bootstrap_readwise_db.py --db data/readwise_pipeline.db --limit 10
+            echo "No state-current release found."
+            echo "Production is blocked until the preserved V4.61 SQLite state is seeded."
+            exit 1
           fi
 
       - name: Validate database
