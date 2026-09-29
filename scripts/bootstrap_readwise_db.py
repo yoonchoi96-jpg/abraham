@@ -5,6 +5,8 @@ import argparse
 import json
 import os
 import sqlite3
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -34,14 +36,37 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 """
 
+_LAST_API_CALL = 0.0
+
 def api_get(token: str, params: dict) -> dict:
+    global _LAST_API_CALL
     query = urllib.parse.urlencode(params)
-    req = urllib.request.Request(
-        API + "?" + query,
-        headers={"Authorization": f"Token {token}"},
-    )
-    with urllib.request.urlopen(req, timeout=60) as response:
-        return json.load(response)
+
+    # Reader base rate is 20 requests/minute per access token.
+    spacing = 3.2
+    wait = spacing - (time.monotonic() - _LAST_API_CALL)
+    if wait > 0:
+        time.sleep(wait)
+
+    for attempt in range(5):
+        req = urllib.request.Request(
+            API + "?" + query,
+            headers={"Authorization": f"Token {token}"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                _LAST_API_CALL = time.monotonic()
+                return json.load(response)
+        except urllib.error.HTTPError as exc:
+            if exc.code != 429 or attempt == 4:
+                raise
+            retry_after = exc.headers.get("Retry-After")
+            try:
+                delay = max(float(retry_after), spacing)
+            except (TypeError, ValueError):
+                delay = spacing * (attempt + 1)
+            time.sleep(delay)
+            _LAST_API_CALL = time.monotonic()
 
 def fetch_detail(token: str, document_id: str) -> dict:
     params = {"id": document_id, "withHtmlContent": "false"}
