@@ -46,6 +46,24 @@ class IncrementalStateTests(unittest.TestCase):
         self.assertEqual([d["readwise_id"] for d in pending2], ["r1"])
         self.assertEqual(skipped2, [])
 
+
+    def test_completed_stage_persists_result_metadata(self):
+        docs = [{"readwise_id": "r1", "content": "hello", "canonical_text": "hello", "document_id": "r1"}]
+        pending, _ = select_pending_documents(self.conn, docs, "document_render")
+        result = {
+            "r1": {
+                "render_hash": "hash",
+                "output_path": "/vault/Inbox/hello.md",
+                "title": "hello",
+                "new_filename": "hello.md",
+            }
+        }
+        mark_completed(self.conn, pending, "document_render", result, result_fields=("render_hash",))
+        row = self.conn.execute(
+            "SELECT result_json FROM document_stages WHERE readwise_id='r1' AND stage='document_render'"
+        ).fetchone()
+        self.assertIn("/vault/Inbox/hello.md", row["result_json"])
+
     def test_reader_color_processing_gate(self):
         cases = {
             "⚪ white": (False, False),
