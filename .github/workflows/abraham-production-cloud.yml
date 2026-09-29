@@ -44,32 +44,41 @@ jobs:
 
       - name: Security gate
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(gh api "repos/\${{ github.repository }}" --jq '.private')" = "true"
+          test "$(gh api "repos/${{ github.repository }}" --jq '.private')" = "true"
 
       - name: Prepare runtime
         run: mkdir -p data vault 90_Dashboard/auto_reports
 
       - name: Restore Obsidian Sync vault
         env:
-          OBSIDIAN_AUTH_TOKEN: \${{ secrets.OBSIDIAN_AUTH_TOKEN }}
-          OBSIDIAN_VAULT_NAME: \${{ secrets.OBSIDIAN_VAULT_NAME }}
-          OBSIDIAN_SYNC_PASSWORD: \${{ secrets.OBSIDIAN_SYNC_PASSWORD }}
+          OBSIDIAN_AUTH_TOKEN: ${{ secrets.OBSIDIAN_AUTH_TOKEN }}
+          OBSIDIAN_VAULT_NAME: ${{ secrets.OBSIDIAN_VAULT_NAME }}
+          OBSIDIAN_SYNC_PASSWORD: ${{ secrets.OBSIDIAN_SYNC_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ -n "${OBSIDIAN_SYNC_PASSWORD}" ]; then
-            ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions" --password "${OBSIDIAN_SYNC_PASSWORD}" || true
+          test -n "${OBSIDIAN_AUTH_TOKEN}" || { echo "Missing OBSIDIAN_AUTH_TOKEN"; exit 1; }
+          test -n "${OBSIDIAN_VAULT_NAME}" || { echo "Missing OBSIDIAN_VAULT_NAME"; exit 1; }
+
+          if ob sync-status --path "${GITHUB_WORKSPACE}/vault" --json >/tmp/abraham-sync-status.json 2>/tmp/abraham-sync-status.err; then
+            cat /tmp/abraham-sync-status.json
           else
-            ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions" || true
+            echo "Vault is not configured locally; bootstrapping Obsidian Sync."
+            cat /tmp/abraham-sync-status.err >&2 || true
+            if [ -n "${OBSIDIAN_SYNC_PASSWORD}" ]; then
+              ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions" --password "${OBSIDIAN_SYNC_PASSWORD}"
+            else
+              ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions"
+            fi
           fi
+
           ob sync-config --path "${GITHUB_WORKSPACE}/vault" --mode bidirectional --conflict-strategy merge
           ob sync --path "${GITHUB_WORKSPACE}/vault"
-
       - name: Restore SQLite state
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           gh release download state-current --pattern readwise_pipeline.db --dir data --clobber
@@ -78,13 +87,13 @@ jobs:
 
       - name: Sync Readwise Reader
         env:
-          READWISE_TOKEN: \${{ secrets.READWISE_TOKEN }}
+          READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
         run: python scripts/sync_readwise.py --db data/readwise_pipeline.db --max-documents 1000 --lookback-minutes 10
 
       - name: Run Abraham
         env:
-          GEMINI_API_KEY: \${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
           ABRAHAM_VAULT_PATH: ${{ github.workspace }}/vault
           ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
@@ -98,9 +107,9 @@ jobs:
 
       - name: Push vault through Obsidian Sync
         env:
-          OBSIDIAN_AUTH_TOKEN: \${{ secrets.OBSIDIAN_AUTH_TOKEN }}
-          OBSIDIAN_VAULT_NAME: \${{ secrets.OBSIDIAN_VAULT_NAME }}
-          OBSIDIAN_SYNC_PASSWORD: \${{ secrets.OBSIDIAN_SYNC_PASSWORD }}
+          OBSIDIAN_AUTH_TOKEN: ${{ secrets.OBSIDIAN_AUTH_TOKEN }}
+          OBSIDIAN_VAULT_NAME: ${{ secrets.OBSIDIAN_VAULT_NAME }}
+          OBSIDIAN_SYNC_PASSWORD: ${{ secrets.OBSIDIAN_SYNC_PASSWORD }}
         run: |
           set -euo pipefail
           ob sync-config --path "${GITHUB_WORKSPACE}/vault" --mode bidirectional --conflict-strategy merge
@@ -111,7 +120,7 @@ jobs:
 
       - name: Refresh persistent state release
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if gh release view state-current >/dev/null 2>&1; then
