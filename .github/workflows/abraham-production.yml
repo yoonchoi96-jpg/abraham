@@ -1,6 +1,8 @@
 name: Abraham V5.6 Production
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "0 0,8,15 * * *" # 09:00, 17:00, 00:00 KST
   workflow_dispatch:
@@ -19,6 +21,7 @@ concurrency:
 
 jobs:
   pipeline:
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[bootstrap]')
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
