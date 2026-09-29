@@ -37,7 +37,7 @@ jobs:
             run_v560_storage.py \
             abraham_sqlite.py \
             abraham_incremental.py \
-            abraham_storage.py
+            abraham_storage.py             scripts/sync_readwise.py
 
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
