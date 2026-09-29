@@ -1736,6 +1736,7 @@ def run_pipeline(args):
     documents, sqlite_relations = loaded
     documents = normalize_document_ids(documents)
     documents, unavailable_documents = prepare_source_content(documents)
+    sqlite_documents_total = len(documents)
 
     # Reader tags are the source of truth for V5 processing/export.
     gated_documents = []
@@ -2018,7 +2019,8 @@ def run_pipeline(args):
             "translations": len(korean_results),
         },
         "statistics": {
-            "sqlite_documents": len(documents),
+            "sqlite_documents": sqlite_documents_total,
+            "exportable_documents": len(documents),
             "entities": len(registry),
             "relations": len(relations),
             "document_entity_links": len(document_entity_links),
