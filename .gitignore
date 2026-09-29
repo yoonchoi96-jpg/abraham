@@ -1,32 +1,14 @@
+# Runtime / persistent state
+data/
+*.db
+*.db-shm
+*.db-wal
+
 # Python
 __pycache__/
-*.py[cod]
+*.pyc
 .venv/
-venv/
-.env
 
-# Local databases
-*.db
-*.sqlite
-*.sqlite3
-
-# Local runtime state
-*.lock
-
-# Reports / logs / caches
-90_Dashboard/auto_reports/
-logs/
-backups/
-*_cache*.json
-
-# Generated / temporary files
-*.tmp
-*.bak
-.DS_Store
-
-# Obsidian local metadata
-.obsidian/
-
-# Secrets
-.env.*
-!.env.example
+# Local runtime outputs
+90_Dashboard/auto_reports/logs/
+90_Dashboard/auto_reports/backups/
