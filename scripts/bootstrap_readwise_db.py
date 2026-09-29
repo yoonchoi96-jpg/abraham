@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import sqlite3
@@ -13,6 +14,26 @@ from pathlib import Path
 
 API = "https://readwise.io/api/v3/list/"
 DETAIL = "https://readwise.io/api/v3/list/"
+
+class _TextExtractor(__import__("html.parser", fromlist=["HTMLParser"]).HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+    def handle_starttag(self, tag, attrs):
+        if tag in {"p", "div", "br", "li", "h1", "h2", "h3", "tr"}:
+            self.parts.append("\n")
+    def handle_endtag(self, tag):
+        if tag in {"p", "div", "li", "h1", "h2", "h3", "tr"}:
+            self.parts.append("\n")
+    def handle_data(self, data):
+        self.parts.append(data)
+
+def html_to_text(value: str) -> str:
+    parser = _TextExtractor()
+    parser.feed(value or "")
+    text = html.unescape("".join(parser.parts))
+    lines = [line.strip() for line in text.splitlines()]
+    return "\n\n".join(line for line in lines if line).strip()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents (
@@ -69,7 +90,7 @@ def api_get(token: str, params: dict) -> dict:
             _LAST_API_CALL = time.monotonic()
 
 def fetch_detail(token: str, document_id: str) -> dict:
-    params = {"id": document_id, "withHtmlContent": "false"}
+    params = {"id": document_id, "withHtmlContent": "true"}
     data = api_get(token, params)
     results = data.get("results") or []
     if not results:
@@ -87,14 +108,18 @@ def bootstrap(db_path: Path, limit: int) -> None:
 
     page = api_get(token, {
         "limit": min(max(limit, 1), 100),
-        "withHtmlContent": "false",
+        "withHtmlContent": "true",
     })
     documents = page.get("results") or []
 
     for item in documents[:limit]:
         # Reader's list endpoint may omit full content for some feed items.
+        if not item.get("content") and item.get("html_content"):
+            item["content"] = html_to_text(item["html_content"])
         if not item.get("content"):
             item = fetch_detail(token, item["id"])
+            if not item.get("content") and item.get("html_content"):
+                item["content"] = html_to_text(item["html_content"])
 
         conn.execute(
             """
