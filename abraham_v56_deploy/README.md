@@ -19,7 +19,7 @@ V5.6 adds a storage lifecycle layer without automatically deleting or moving Obs
 - `abraham-storage.service/.timer`: daily safe maintenance
 - `abraham-backup.service/.timer`: SQLite backup
 - `abraham-headless-sync.service`: Obsidian continuous sync
-- `abraham.service/.timer`: eight daily pipeline runs
+- `abraham.service/.timer`: three daily pipeline runs (00:00 / 09:00 / 17:00 KST)
 
 ## Useful commands
 ```bash
