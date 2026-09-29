@@ -8,9 +8,9 @@ def ensure_schema(conn):
  conn.executescript("""CREATE TABLE IF NOT EXISTS v8_events(event_id TEXT PRIMARY KEY,event_type TEXT NOT NULL,entity_key TEXT,payload_json TEXT NOT NULL,created_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS v8_insights(insight_id TEXT PRIMARY KEY,kind TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,evidence_json TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'candidate',created_at TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS idx_v8_insights_status ON v8_insights(status);"""); conn.commit()
-def detect(conn,documents,max_documents=1000):
+def detect(conn,documents,max_documents=250):
  ensure_schema(conn); byid={str(d.get("readwise_id")):d for d in documents}; checked=created=0
- rows=conn.execute("""SELECT DISTINCT readwise_id FROM document_stages WHERE status='completed' ORDER BY updated_at DESC LIMIT ?""",(max_documents,)).fetchall()
+ rows=conn.execute("""SELECT DISTINCT readwise_id FROM document_stages WHERE status='completed' ORDER BY updated_at DESC LIMIT ?""",(max(1,min(int(max_documents),250)),)).fetchall()
  for row in rows:
   rid=str(row[0]); d=byid.get(rid)
   if not d: continue
