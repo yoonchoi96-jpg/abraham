@@ -133,9 +133,10 @@ PY
         run: |
           set -euo pipefail
           if gh release view state-current >/dev/null 2>&1; then
-            gh release delete state-current --yes
+            gh release upload state-current data/readwise_pipeline.db --clobber
+          else
+            gh release create state-current data/readwise_pipeline.db               --title "Abraham SQLite State"               --notes "Rolling persistent SQLite state for Abraham V5.6. Updated by GitHub Actions."
           fi
-          gh release create state-current data/readwise_pipeline.db             --title "Abraham SQLite State"             --notes "Rolling persistent SQLite state for Abraham V5.6. Updated by GitHub Actions."
 
       - name: Upload diagnostics
         if: always()
