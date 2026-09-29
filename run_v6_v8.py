@@ -7,7 +7,7 @@ from v6_semantic import index_documents,search
 from v7_research import ensure_schema as v7_schema
 from v8_autonomous import ensure_schema as v8_schema,detect
 def main():
- p=argparse.ArgumentParser(); p.add_argument("--mode",choices=("index","search","research","autonomous","status"),default="autonomous"); p.add_argument("--query"); p.add_argument("--limit",type=int,default=1000); p.add_argument("--question"); a=p.parse_args()
+ p=argparse.ArgumentParser(); p.add_argument("--mode",choices=("index","search","research","autonomous","status"),default="autonomous"); p.add_argument("--query"); p.add_argument("--limit",type=int,default=250); p.add_argument("--question"); a=p.parse_args()
  c=connect(); ensure_schema(c); v7_schema(c); v8_schema(c); docs,_=load_documents()
  if a.mode=="index": out={"v6":index_documents(c,docs)}
  elif a.mode=="search":
