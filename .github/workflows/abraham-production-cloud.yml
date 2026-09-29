@@ -20,7 +20,7 @@ concurrency:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 350
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -102,8 +102,13 @@ jobs:
           ABRAHAM_SCHEDULE_KST: "00:00,09:00,17:00"
         run: |
           limit="${{ inputs.limit }}"
-          if [ -z "${limit}" ]; then limit="300"; fi
-          python run_v560_storage.py --apply --limit "${limit}"
+          if [ -n "${limit}" ]; then
+            echo "Manual limit requested: ${limit}"
+            python run_v560_storage.py --apply --limit "${limit}"
+          else
+            echo "No workload limit: process the full pending/changed set until the runner time budget is exhausted."
+            python run_v560_storage.py --apply
+          fi
 
       - name: Push vault through Obsidian Sync
         env:
