@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from datetime import datetime, timezone
 from typing import Iterable
@@ -18,6 +19,7 @@ CREATE TABLE IF NOT EXISTS document_stages (
     worker_id TEXT,
     content_hash TEXT,
     result_hash TEXT,
+    result_json TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (readwise_id, stage)
 );
@@ -60,6 +62,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     required_columns = {
         "content_hash": "TEXT",
         "result_hash": "TEXT",
+        "result_json": "TEXT",
     }
 
     for column, column_type in required_columns.items():
@@ -175,15 +178,27 @@ def mark_completed(conn: sqlite3.Connection, documents: list[dict], stage: str, 
         did = d.get('document_id')
         result = result_by_id.get(did, {})
         rh = result_hash(*(result.get(k, '') for k in result_fields))
+        metadata = {
+            k: result[k]
+            for k in ('output_path', 'title', 'old_filename', 'new_filename')
+            if k in result
+        }
         conn.execute(
             '''UPDATE document_stages
                SET status='completed', completed_at=?, last_error=NULL,
-                   content_hash=?, result_hash=?, updated_at=?
+                   content_hash=?, result_hash=?, result_json=?, updated_at=?
                WHERE readwise_id=? AND stage=?''',
-            (now, d.get('_stage_content_hash'), rh, now, rid, stage),
+            (
+                now,
+                d.get('_stage_content_hash'),
+                rh,
+                json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                now,
+                rid,
+                stage,
+            ),
         )
     conn.commit()
-
 
 def mark_failed(conn: sqlite3.Connection, documents: list[dict], stage: str, error: Exception) -> None:
     now = utc_now()
