@@ -108,7 +108,19 @@ def main():
             SELECT COUNT(*)
             FROM document_stages s
             LEFT JOIN documents d ON d.readwise_id = s.readwise_id
-            WHERE d.readwise_id IS NULL
+            WHERE s.stage <> 'entity_render'
+              AND d.readwise_id IS NULL
+            """,
+        )
+
+        orphan_entity_render_stages = q(
+            con,
+            """
+            SELECT COUNT(*)
+            FROM document_stages s
+            LEFT JOIN entities e ON e.entity_id = s.readwise_id
+            WHERE s.stage = 'entity_render'
+              AND e.entity_id IS NULL
             """,
         )
 
@@ -118,6 +130,7 @@ def main():
             "orphan_relations": orphan_relations,
             "orphan_ratings": orphan_ratings,
             "orphan_document_stages": orphan_stages,
+            "orphan_entity_render_stages": orphan_entity_render_stages,
         }
 
         print("ABRAHAM_STATE_OK")
