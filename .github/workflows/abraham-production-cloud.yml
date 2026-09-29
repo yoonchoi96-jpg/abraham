@@ -1,6 +1,6 @@
 name: Abraham V5.6 Production Cloud
 
-"on":
+on:
   schedule:
     - cron: "0 0,8,15 * * *" # 09:00, 17:00, 00:00 KST
   workflow_dispatch:
