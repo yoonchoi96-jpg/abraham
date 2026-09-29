@@ -70,3 +70,25 @@ The prepared DB should then be uploaded as the initial `readwise_pipeline.db` as
 <!-- smoke validation: Reader-gated rating stage -->
 
 <!-- smoke metric validation -->
+
+
+## Reader color processing policy
+
+Reader rating/color tags are the source of truth. Abraham does not ask Gemini to classify the color.
+
+| Reader color | Korean translation | Rating | Obsidian export |
+|---|---:|---:|---:|
+| White | No | No | No |
+| Red | No | No | No |
+| Orange | Yes | No | Yes |
+| Yellow | Yes | No | Yes |
+| Green | Yes | No | Yes |
+| Blue | Yes | Yes | Yes |
+| Navy | Yes | Yes | Yes |
+| Purple | Yes | Yes | Yes |
+| Gold | Yes | Yes | Yes |
+
+Conflicting or unclassified color tags are quarantined: no rating, translation, or Obsidian export.
+
+Existing SQLite ratings are adopted into the V5 rating stage without another Gemini call. Only rateable documents that lack a valid completed rating stage require the rating AI stage.
+
