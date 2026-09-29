@@ -151,6 +151,12 @@ def writable_values(item, columns, content, canonical_text=None):
         "canonical_text": canonical_text if canonical_text is not None else content,
         "source_language": item.get("language") or "",
         "canonical_language": item.get("language") or "",
+        # Reader tags are the authoritative V5 color/rating gate.
+        "readwise_tags": json.dumps(
+            item.get("tags") or {},
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
         "status": "new",
         "path": "",
     }
@@ -196,6 +202,14 @@ def upsert(conn, item, columns, existing):
     # Preserve the V4.61 canonical text on existing rows. A future canonicalization
     # stage can replace it deliberately; ingestion must not silently destroy it.
     values.pop("canonical_text", None)
+
+    # Refresh Reader tags when supplied; never fabricate them.
+    if "readwise_tags" in columns and item.get("tags") is not None:
+        values["readwise_tags"] = json.dumps(
+            item.get("tags") or {},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
     assignments = [f'"{name}" = ?' for name in values if name != "readwise_id"]
     params = [values[name] for name in values if name != "readwise_id"]
     if assignments:
