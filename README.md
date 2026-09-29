@@ -5,9 +5,9 @@ Abraham is the Readwise Reader → SQLite → Obsidian knowledge pipeline.
 ## Current production line
 
 - V4.61 Freeze: cleaned compatibility baseline.
-- V5.6: cloud-ready incremental pipeline with SQLite stage state, Korean translation caching, safe file writes, backups, storage maintenance, and an execution lock.
+- V5.6: cloud-ready incremental pipeline with SQLite stage state, SQLite-backed Korean result caching, safe file writes, backups, storage maintenance, and an execution lock.
 - Readwise: connected through the Reader integration for current document retrieval.
-- Obsidian: the production vault remains an external/local filesystem synced separately; this repository does not pretend GitHub has direct access to the user's Mac vault.
+- Obsidian: GitHub Actions uses Obsidian Headless to sync the production vault; the runner keeps only an ephemeral working copy and does not require the Mac or iPhone to hold the full vault.
 
 ## Production schedule
 
@@ -65,11 +65,6 @@ python scripts/prepare_v461_state.py \
 It copies the source without modifying it, runs `PRAGMA integrity_check`, and reports the baseline table counts.
 
 The prepared DB should then be uploaded as the initial `readwise_pipeline.db` asset of the private `state-current` GitHub Release. The production workflow subsequently restores and replaces this rolling state asset after each successful run.
-
-
-<!-- smoke validation: Reader-gated rating stage -->
-
-<!-- smoke metric validation -->
 
 
 ## Reader color processing policy
