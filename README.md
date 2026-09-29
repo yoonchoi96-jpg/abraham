@@ -44,7 +44,7 @@ See abraham_v56_deploy/README.md for the Linux/systemd deployment model, includi
 
 Production does not bootstrap a replacement SQLite database. If the rolling `state-current` Release Asset is missing, the production workflow fails closed. This prevents a test/smoke database from ever replacing the preserved V4.61 state.
 
-The first production state must be the validated V4.61 SQLite database from the freeze baseline. After that, each successful production run restores the state, incrementally syncs Readwise, processes changes, commits Vault/report output, and refreshes the rolling SQLite Release Asset.
+The first production state must be the validated V4.61 SQLite database from the freeze baseline. After that, each successful production run restores the state, incrementally syncs Readwise, processes changes, commits Vault/report output, and refreshes the rolling SQLite Release Asset. The existing release asset is replaced in-place with `gh release upload --clobber`, so a failed upload does not require deleting the previous state first.
 
 ## Readwise ingestion
 
