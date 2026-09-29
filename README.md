@@ -68,3 +68,5 @@ The prepared DB should then be uploaded as the initial `readwise_pipeline.db` as
 
 
 <!-- smoke validation: Reader-gated rating stage -->
+
+<!-- smoke metric validation -->
