@@ -1763,7 +1763,16 @@ def run_pipeline(args):
     documents = gated_documents
 
     # ------------------------------------------------------------
-    # 1. Korean stage: only new/changed source content goes to AI.
+    # 1. Rating stage: only Blue/Navy/Purple/Gold documents.
+    # Existing ratings are adopted without another AI call.
+    # ------------------------------------------------------------
+    rating_results, rating_pending, rating_skipped = rate_documents(documents, args)
+    print("Rating required       :", sum(1 for d in documents if d.get("_rating_required")))
+    print("Rating AI pending     :", len(rating_pending))
+    print("Rating skipped        :", len(rating_skipped))
+
+    # ------------------------------------------------------------
+    # 2. Korean stage: only new/changed source content goes to AI.
     # ------------------------------------------------------------
     korean_stage = "korean_translation"
     with connect_db() as stage_conn:
@@ -1825,7 +1834,7 @@ def run_pipeline(args):
             mark_completed(stage_conn, korean_pending, korean_stage, korean_results)
 
     # ------------------------------------------------------------
-    # 2. Build complete knowledge indexes from SQLite.
+    # 3. Build complete knowledge indexes from SQLite.
     # ------------------------------------------------------------
     relations = get_validated_relations(sqlite_relations)
     registry = build_entity_registry(documents)
@@ -1840,7 +1849,7 @@ def run_pipeline(args):
     print("Entity → Entity links   :", len(entity_relation_links))
 
     # ------------------------------------------------------------
-    # 3. Document render stage.
+    # 4. Document render stage.
     # Hash the complete render inputs, not merely source content.
     # This catches relation/entity changes even when the article itself
     # did not change.
@@ -1939,7 +1948,7 @@ def run_pipeline(args):
         used_targets.add(str(candidate.resolve()))
 
     # ------------------------------------------------------------
-    # 4. Entity render stage: only entities whose rendered graph changed.
+    # 5. Entity render stage: only entities whose rendered graph changed.
     # ------------------------------------------------------------
     entity_candidates = []
     for entity in registry.values():
@@ -1992,6 +2001,8 @@ def run_pipeline(args):
         "source": "sqlite",
         "schedule_kst": [x.strip() for x in ABRAHAM_SCHEDULE_KST.split(",") if x.strip()],
         "incremental": {
+            "rating_pending": len(rating_pending),
+            "rating_skipped": len(rating_skipped),
             "korean_pending": len(korean_pending),
             "korean_skipped": len(korean_skipped),
             "document_render_pending": len(render_pending),
