@@ -28,8 +28,8 @@ from dotenv import load_dotenv
 from abraham_storage import storage_status, run_storage_maintenance
 
 
-VERSION = "5.6.0"
-PROMPT_VERSION = "5.6.0-korean-presentation-sqlite"
+VERSION = "5.6.1"
+PROMPT_VERSION = "5.6.1-korean-presentation-sqlite"
 
 load_dotenv()
 
