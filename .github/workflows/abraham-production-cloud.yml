@@ -120,7 +120,12 @@ jobs:
           ob sync-config --path "${GITHUB_WORKSPACE}/vault" --mode bidirectional --conflict-strategy merge
           ob sync --path "${GITHUB_WORKSPACE}/vault"
 
-      - name: Run V6-V8 intelligence\n        env:\n          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db\n        run: python run_v6_v8.py --mode autonomous --limit 1000\n\n      - name: Validate final SQLite state
+      - name: Run V6-V8 intelligence
+        env:
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+        run: python run_v6_v8.py --mode autonomous --limit 1000
+
+      - name: Validate final SQLite state
         run: python scripts/verify_state.py --db data/readwise_pipeline.db
 
       - name: Refresh persistent state release
