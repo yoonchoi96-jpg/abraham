@@ -633,6 +633,51 @@ def _rate_batch(client, documents):
     if expected != actual: raise ValueError("Rating IDs mismatch")
     return [_validate_rating(x,x.get("document_id")) for x in items]
 
+def _ensure_existing_rating_stages(conn, documents):
+    now=datetime.utcnow().isoformat()
+    for d in documents:
+        rid=str(d.get("readwise_id") or "").strip()
+        if not rid: continue
+        exists=conn.execute("SELECT 1 FROM ratings WHERE readwise_id=? LIMIT 1",(rid,)).fetchone()
+        stage=conn.execute("SELECT 1 FROM document_stages WHERE readwise_id=? AND stage='rating'",(rid,)).fetchone()
+        if exists and not stage:
+            h=d.get("_stage_content_hash") or stable_text_hash(d.get("content"),d.get("canonical_text"))
+            conn.execute("INSERT INTO document_stages(readwise_id,stage,status,attempt_count,completed_at,content_hash,result_hash,updated_at) VALUES(?,'rating','completed',0,?,?,?,?)",(rid,now,h,stable_text_hash(rid,"existing-rating"),now))
+    conn.commit()
+
+def _persist_ratings(conn, documents, results):
+    now=datetime.utcnow().isoformat()
+    by_id={d["document_id"]:d for d in documents}
+    for item in results:
+        d=by_id[item["document_id"]]
+        values=[item[k] for k in RATING_DIMENSIONS]
+        total=sum(values); average=round(total/len(values),1); tier=_rating_tier(average)
+        conn.execute("""INSERT INTO ratings(readwise_id,rated_at,rating_version,long_term_knowledge_value,decision_relevance,information_density,uniqueness,knowledge_graph_value,evidence_quality,depth_and_insight,transferability,strategic_structural_significance,future_reference_value,total_score,average,tier,global_rank,rank_in_sync,top_pick,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,0,?) ON CONFLICT(readwise_id) DO UPDATE SET rated_at=excluded.rated_at,rating_version=excluded.rating_version,long_term_knowledge_value=excluded.long_term_knowledge_value,decision_relevance=excluded.decision_relevance,information_density=excluded.information_density,uniqueness=excluded.uniqueness,knowledge_graph_value=excluded.knowledge_graph_value,evidence_quality=excluded.evidence_quality,depth_and_insight=excluded.depth_and_insight,transferability=excluded.transferability,strategic_structural_significance=excluded.strategic_structural_significance,future_reference_value=excluded.future_reference_value,total_score=excluded.total_score,average=excluded.average,tier=excluded.tier,top_pick=excluded.top_pick,reason=excluded.reason""",(str(d["readwise_id"]),now,"v5.6-reader-gated",*values,total,average,tier,item["reason"]))
+        item["_total_score"]=total; item["_average"]=average; item["_tier"]=tier
+    conn.commit()
+
+def rate_documents(documents,args):
+    rateable=[d for d in documents if d.get("_rating_required")]
+    if not rateable: return {},[],[]
+    with connect_db() as conn:
+        ensure_schema(conn); _ensure_existing_rating_stages(conn,rateable)
+        pending,skipped=select_pending_documents(conn,rateable,"rating",force_ids=args.readwise_id)
+        if args.limit is not None: pending=pending[:args.limit]
+        if args.apply and pending: mark_started(conn,pending,"rating",worker_id="abraham-v5.6")
+    if not pending: return {},pending,skipped
+    if not args.apply: return {},pending,skipped
+    client=get_korean_client(); results={}
+    try:
+        for start in range(0,len(pending),KOREAN_BATCH_SIZE):
+            for item in _rate_batch(client,pending[start:start+KOREAN_BATCH_SIZE]): results[item["document_id"]]=item
+        with connect_db() as conn:
+            _persist_ratings(conn,pending,list(results.values()))
+            mark_completed(conn,pending,"rating",results,result_fields=RATING_DIMENSIONS)
+    except Exception as exc:
+        with connect_db() as conn: mark_failed(conn,pending,"rating",exc)
+        raise
+    return results,pending,skipped
+
 def translate_documents_to_korean(
     documents,
     limit=None,
