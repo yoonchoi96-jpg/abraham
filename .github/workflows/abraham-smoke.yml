@@ -1,6 +1,6 @@
 name: Abraham V5.6 Smoke Test
 
-"on":
+on:
   workflow_dispatch:
 
 permissions:
