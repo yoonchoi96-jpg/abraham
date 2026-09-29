@@ -38,3 +38,19 @@ CI compiles the production modules, runs unit tests for incremental state, and v
 ## Deployment
 
 See abraham_v56_deploy/README.md for the Linux/systemd deployment model, including the separate Obsidian headless-sync service.
+
+## V4.61 state migration
+
+The canonical V4.61 SQLite database must be preserved as-is. Do not rebuild the 8,802-document state from Readwise API because that would lose the existing entity, relation, stage, and cache state.
+
+Use the migration validator:
+
+```bash
+python scripts/prepare_v461_state.py \
+  --source /Users/w/obsidian_auto/obsidian_auto_v1/v4/readwise_pipeline.db \
+  --output /tmp/readwise_pipeline.db
+```
+
+It copies the source without modifying it, runs `PRAGMA integrity_check`, and reports the baseline table counts.
+
+The prepared DB should then be uploaded as the initial `readwise_pipeline.db` asset of the private `state-current` GitHub Release. The production workflow subsequently restores and replaces this rolling state asset after each successful run.
