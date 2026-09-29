@@ -1,0 +1,140 @@
+name: Abraham V5.6 Production Cloud
+
+on:
+  schedule:
+    - cron: "0 0,8,15 * * *" # 09:00, 17:00, 00:00 KST
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Maximum uncached documents to process"
+        required: false
+        default: "10"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: abraham-production
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Security gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          private=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.private')
+          if [ "${private}" != "true" ]; then
+            echo "Abraham persistent state is intentionally blocked while the repository is public."
+            echo "Make the repository private before enabling persistent SQLite/vault production runs."
+            exit 1
+          fi
+
+      - name: Prepare runtime directories
+        run: |
+          mkdir -p data vault 90_Dashboard/auto_reports
+          rm -f data/readwise_pipeline.db
+
+      - name: Restore persistent SQLite state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view state-current --json assets >/tmp/state.json 2>/dev/null; then
+            asset_url=$(python - <<'PY'
+import json
+data=json.load(open("/tmp/state.json"))
+for asset in data.get("assets", []):
+    if asset.get("name") == "readwise_pipeline.db":
+        print(asset["url"])
+        break
+PY
+)
+            if [ -z "${asset_url}" ]; then
+              echo "state-current exists but has no readwise_pipeline.db asset"
+              exit 1
+            fi
+            gh api -H "Accept: application/octet-stream" "${asset_url}" > data/readwise_pipeline.db
+            echo "Restored SQLite state from state-current"
+          else
+            echo "No state-current release found."
+            echo "Production is blocked until the preserved V4.61 SQLite state is seeded."
+            exit 1
+          fi
+
+      - name: Validate persistent SQLite state
+        run: python scripts/verify_state.py --db data/readwise_pipeline.db
+
+      - name: Sync Readwise Reader into SQLite
+        env:
+          READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+        run: |
+          python scripts/sync_readwise.py --db data/readwise_pipeline.db --max-documents 1000 --lookback-minutes 10
+
+      - name: Validate state after Readwise sync
+        run: python scripts/verify_state.py --db data/readwise_pipeline.db
+
+      - name: Run Abraham V5.6
+        env:
+          READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+          ABRAHAM_VAULT_PATH: ${{ github.workspace }}/vault
+          ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
+          ABRAHAM_KOREAN_CACHE_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/korean_presentation_cache_v50.json
+          ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
+          ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
+          ABRAHAM_SCHEDULE_KST: "00:00,09:00,17:00"
+        run: |
+          limit="${{ inputs.limit }}"
+          if [ -z "${limit}" ]; then limit="10"; fi
+          python run_v560_storage.py --apply --limit "${limit}"
+
+      - name: Commit vault and reports
+        run: |
+          git config user.name "Abraham Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vault/ 90_Dashboard/auto_reports/
+          git diff --cached --quiet || git commit -m "Abraham pipeline run"
+          git push
+
+      - name: Refresh persistent SQLite release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view state-current >/dev/null 2>&1; then
+            gh release upload state-current data/readwise_pipeline.db --clobber
+          else
+            gh release create state-current data/readwise_pipeline.db               --title "Abraham SQLite State"               --notes "Rolling persistent SQLite state for Abraham V5.6. Updated by GitHub Actions."
+          fi
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: abraham-run-diagnostics
+          path: |
+            90_Dashboard/auto_reports/*.json
+            90_Dashboard/auto_reports/logs/*.log
+          if-no-files-found: ignore
