@@ -41,7 +41,7 @@ MODEL = os.getenv(
 # Cloud-ready paths: the same code runs locally or on a Linux VM.
 VAULT_PATH = Path(os.getenv(
     "ABRAHAM_VAULT_PATH",
-    "/Users/w/Desktop/Invest/Invest Insight",
+    os.getenv("GITHUB_WORKSPACE", ".") + "/vault",
 )).expanduser()
 REPORT_DIR = Path(os.getenv(
     "ABRAHAM_REPORT_DIR",
