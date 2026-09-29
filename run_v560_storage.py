@@ -1999,6 +1999,7 @@ def run_pipeline(args):
         "timestamp": datetime.now().isoformat(),
         "mode": "apply" if args.apply else "dry-run",
         "source": "sqlite",
+        "reader_color_gate": gate_counts,
         "schedule_kst": [x.strip() for x in ABRAHAM_SCHEDULE_KST.split(",") if x.strip()],
         "incremental": {
             "rating_pending": len(rating_pending),
