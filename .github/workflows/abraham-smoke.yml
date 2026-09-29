@@ -1,9 +1,6 @@
 name: Abraham V5.6 Smoke Test
 
 "on":
-  push:
-    paths:
-      - ".never-trigger-smoke"
   workflow_dispatch:
 
 permissions:
