@@ -39,5 +39,8 @@ jobs:
             abraham_incremental.py \
             abraham_storage.py
 
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
       - name: Validate CLI schedule
         run: python run_v560_storage.py --print-schedule
