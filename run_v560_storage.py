@@ -1866,6 +1866,7 @@ def run_pipeline(args):
                 else:
                     new_path = current_path.parent / f"{safe_filename(korean_title)}.md"
 
+                document["_output_path"] = str(new_path)
                 document_previews.append({
                     "document_id": document_id,
                     "title": korean_title,
@@ -2000,7 +2001,7 @@ def run_pipeline(args):
                         stage_conn,
                         render_pending,
                         render_stage,
-                        {d["document_id"]: {"render_hash": d["_render_hash"]} for d in render_pending},
+                        {d["document_id"]: {"render_hash": d["_render_hash"], "output_path": d.get("_output_path") or d.get("target_path"), "title": d.get("title", ""), "old_filename": d.get("old_filename"), "new_filename": d.get("new_filename")} for d in render_pending},
                         result_fields=("render_hash",),
                     )
                 if entity_pending:
