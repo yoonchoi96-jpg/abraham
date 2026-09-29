@@ -33,7 +33,9 @@ def _docs(conn,rids):
  q=",".join("?" for _ in rids); rows=conn.execute(f"SELECT * FROM documents WHERE readwise_id IN ({q})",rids).fetchall()
  return [dict(r) for r in rows]
 def search(conn,query,limit=10):
- ensure_schema(conn); qv=vector(query); scored=[]
+ ensure_schema(conn)
+ limit=max(1,min(int(limit),50))
+ qv=vector(query); scored=[]
  for r in conn.execute("SELECT readwise_id,vector_json FROM v6_vectors"):
   try: scored.append((cosine(qv,json.loads(r[1])),r[0]))
   except: pass
