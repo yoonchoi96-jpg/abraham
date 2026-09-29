@@ -249,7 +249,18 @@ def _load_documents(
     sql = "SELECT * FROM documents"
     if where:
         sql += " WHERE " + where
-    sql += " ORDER BY COALESCE(updated_at, last_processed_at, first_seen_at, rowid) DESC"
+
+    # V4/V5 databases do not necessarily expose the same timestamp columns.
+    # Build the ordering expression from columns that actually exist.
+    document_columns = _table_columns(conn, "documents")
+    order_columns = [
+        name for name in ("updated_at", "last_processed_at", "first_seen_at")
+        if name in document_columns
+    ]
+    if order_columns:
+        sql += " ORDER BY COALESCE(" + ", ".join(order_columns + ["rowid"]) + ") DESC"
+    else:
+        sql += " ORDER BY rowid DESC"
     if limit is not None:
         sql += " LIMIT ?"
         params = (*params, limit)
