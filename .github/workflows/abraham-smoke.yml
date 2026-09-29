@@ -36,8 +36,18 @@ jobs:
         run: python run_v560_storage.py --apply --limit 10
       - name: Smoke assertions
         run: |
+          set -euo pipefail
           test -s /tmp/readwise_pipeline.db
-          test -d smoke_vault
-          count=$(find smoke_vault -name "*.md" | wc -l)
-          echo "Markdown files: $count"
-          test "$count" -ge 1
+          report=$(find smoke_reports -name 'readwise_auto_v5.6_*.json' -print -quit)
+          test -n "$report"
+          python - "$report" <<'PY'
+import json, sys
+data=json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["version"] == "5.6.0"
+gate=data["reader_color_gate"]
+assert all(k in gate for k in ("white","red","orange","yellow","green","blue","navy","purple","gold"))
+assert data["statistics"]["sqlite_documents"] == 10
+print("Smoke gate:", gate)
+print("Smoke rating pending:", data["incremental"]["rating_pending"])
+print("Smoke Korean pending:", data["incremental"]["korean_pending"])
+PY
