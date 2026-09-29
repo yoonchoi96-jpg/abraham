@@ -601,6 +601,38 @@ def _processing_gate(document):
 
     return color, False, False
 
+RATING_DIMENSIONS = ("long_term_knowledge_value","decision_relevance","information_density","uniqueness","knowledge_graph_value","evidence_quality","depth_and_insight","transferability","strategic_structural_significance","future_reference_value")
+
+def _build_rating_prompt(documents):
+    payload = [{"document_id":d["document_id"],"title":d.get("title",""),"canonical_text":d.get("canonical_text") or d.get("content") or ""} for d in documents]
+    return "Rate each document using 0-100 scores in increments of 5 or 10. Use only supplied text. Return strict JSON ratings array containing document_id, all ten dimensions, and reason. Dimensions: " + ", ".join(RATING_DIMENSIONS) + ". Documents:\n" + json.dumps(payload, ensure_ascii=False)
+
+def _rating_tier(average):
+    return "B+" if average >= 80 else "B" if average >= 70 else "C" if average >= 60 else "D"
+
+def _validate_rating(item, expected_id):
+    if not isinstance(item,dict) or item.get("document_id") != expected_id: raise ValueError("Rating document_id mismatch")
+    clean={"document_id":expected_id}
+    for key in RATING_DIMENSIONS:
+        value=item.get(key)
+        if isinstance(value,bool) or not isinstance(value,(int,float)): raise ValueError("Invalid rating value: "+key)
+        value=int(value)
+        if value < 0 or value > 100 or value % 5: raise ValueError("Rating must be 0-100 in increments of 5: "+key)
+        clean[key]=value
+    clean["reason"]=str(item.get("reason") or "").strip()[:4000]
+    if not clean["reason"]: raise ValueError("Missing rating reason")
+    return clean
+
+def _rate_batch(client, documents):
+    response=client.models.generate_content(model=MODEL,contents=_build_rating_prompt(documents),config={"response_mime_type":"application/json","service_tier":"flex"})
+    data=json.loads(response.text.strip().strip("`").replace("json\n","",1))
+    items=data.get("ratings")
+    if not isinstance(items,list): raise ValueError("ratings must be a list")
+    expected={d["document_id"] for d in documents}
+    actual={x.get("document_id") for x in items if isinstance(x,dict)}
+    if expected != actual: raise ValueError("Rating IDs mismatch")
+    return [_validate_rating(x,x.get("document_id")) for x in items]
+
 def translate_documents_to_korean(
     documents,
     limit=None,
