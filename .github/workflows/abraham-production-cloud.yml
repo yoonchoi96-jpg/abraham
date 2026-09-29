@@ -1,4 +1,4 @@
-name: Abraham V5.6 Production Cloud
+name: Abraham V5.6.1 Production Cloud
 
 on:
   schedule:
@@ -129,7 +129,7 @@ PY
       - name: Validate state after Readwise sync
         run: python scripts/verify_state.py --db data/readwise_pipeline.db
 
-      - name: Run Abraham V5.6
+      - name: Run Abraham V5.6.1
         env:
           READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -169,7 +169,7 @@ PY
           if gh release view state-current >/dev/null 2>&1; then
             gh release upload state-current data/readwise_pipeline.db --clobber
           else
-            gh release create state-current data/readwise_pipeline.db               --title "Abraham SQLite State"               --notes "Rolling persistent SQLite state for Abraham V5.6. Updated by GitHub Actions."
+            gh release create state-current data/readwise_pipeline.db               --title "Abraham SQLite State"               --notes "Rolling persistent SQLite state for Abraham V5.6.1. Updated by GitHub Actions."
           fi
 
       - name: Upload diagnostics
