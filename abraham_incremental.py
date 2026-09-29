@@ -180,7 +180,7 @@ def mark_completed(conn: sqlite3.Connection, documents: list[dict], stage: str, 
         rh = result_hash(*(result.get(k, '') for k in result_fields))
         metadata = {
             k: result[k]
-            for k in ('output_path', 'title', 'old_filename', 'new_filename')
+            for k in ('output_path', 'title', 'old_filename', 'new_filename', 'korean_title', 'korean_text', 'translation_notes', 'prompt_version', 'model', 'cache_key')
             if k in result
         }
         conn.execute(
