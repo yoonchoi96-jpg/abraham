@@ -1,6 +1,6 @@
 name: Abraham V5.6 Production Cloud
 
-on:
+"on":
   push:
     paths:
       - ".never-trigger-production"
