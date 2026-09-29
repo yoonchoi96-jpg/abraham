@@ -141,7 +141,7 @@ PY
           ABRAHAM_SCHEDULE_KST: "00:00,09:00,17:00"
         run: |
           limit="${{ inputs.limit }}"
-          if [ -z "${limit}" ]; then limit="10"; fi
+          if [ -z "${limit}" ]; then limit="300"; fi
           python run_v560_storage.py --apply --limit "${limit}"
 
       - name: Push generated vault changes to Obsidian Sync
