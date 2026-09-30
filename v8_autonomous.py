@@ -11,7 +11,7 @@ import sqlite3
 from datetime import datetime, timezone
 from v6_semantic import related
 
-VERSION = "8.2.0"
+VERSION = "8.3.0"
 
 
 def _now() -> str:
@@ -112,15 +112,8 @@ def detect(conn, documents, max_documents=250):
 
         checked += 1
         rel = related(conn, rid, 3)
-        payload = {
-            "readwise_id": rid,
-            "stage": row["stage"],
-            "title": d.get("title", ""),
-            "related": rel,
-            "stage_signature": signature,
-        }
-
         # Persist the watermark even when there are no related documents:
+
         # that case is also a fully processed state.
         now = _now()
         conn.execute(
@@ -140,6 +133,22 @@ def detect(conn, documents, max_documents=250):
         rel = [x for x in rel if float(x.get("score", 0.0)) >= 0.15]
         if not rel:
             continue
+
+        related_titles = []
+        for item in rel:
+            rr = conn.execute("SELECT title FROM documents WHERE readwise_id=?", (item["readwise_id"],)).fetchone()
+            related_titles.append({
+                "readwise_id": item["readwise_id"],
+                "title": (rr["title"] if rr else "") or "",
+                "score": item["score"],
+            })
+        payload = {
+            "readwise_id": rid,
+            "stage": row["stage"],
+            "title": d.get("title", ""),
+            "related": related_titles,
+            "stage_signature": signature,
+        }
 
         eid = _hash("new_related_cluster", rid, row["stage"], signature)[:32]
         if conn.execute(
@@ -165,7 +174,9 @@ def detect(conn, documents, max_documents=250):
                 iid,
                 "knowledge_connection",
                 "새로운 지식 연결 후보",
-                "기존 지식과 유사도가 높은 문서 연결이 감지되었습니다. 근거를 검토하세요.",
+                "기존 지식과의 강한 연결이 감지되었습니다: " + ", ".join(
+                    f'{x["title"] or x["readwise_id"]} ({float(x["score"]):.2f})' for x in related_titles
+                ) + ". 원문 근거를 검토하세요.",
                 json.dumps(payload, ensure_ascii=False),
                 "candidate",
                 now,
