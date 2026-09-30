@@ -1684,7 +1684,11 @@ def run_pipeline(args):
 
     entity_classification_results, entity_classification_pending, entity_classification_skipped = classify_entities(registry, args)
     if entity_classification_results:
-        registry = build_entity_registry(documents)
+        for document in documents:
+            for entity in document.get("resolved_entities", []):
+                entity_id = str(entity.get("entity_id") or "")
+                if entity_id in entity_classification_results:
+                    entity["entity_type"] = entity_classification_results[entity_id]
 
     document_entity_links = build_document_entity_links(documents)
     entity_relation_links = build_entity_relation_links(relations)
