@@ -24,7 +24,7 @@ def test_deepseek_json_payload_uses_provider_fields(monkeypatch):
         },
     )
     assert captured["response_format"] == {"type": "json_object"}
-    assert captured["max_tokens"] == 32768
+    assert captured["max_tokens"] == 4096
     assert captured["thinking"] == {"type": "disabled"}
     assert "response_schema" not in captured
     assert "service_tier" not in captured
