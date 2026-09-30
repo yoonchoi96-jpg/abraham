@@ -162,7 +162,7 @@ def test_v7_persists_disagreement_signals():
     c = db()
     docs = [
         {"readwise_id": "1", "title": "Claim A", "canonical_text": "AI chips improve performance but no evidence"},
-        {"readwise_id": "2", "title": "Claim B", "canonical_text": "AI chips improve efficiency with evidence"},
+        {"readwise_id": "2", "title": "Claim B", "canonical_text": "AI chips improve performance with evidence"},
     ]
     index_documents(c, docs)
     result = run_research(c, "AI chips performance", 2)
