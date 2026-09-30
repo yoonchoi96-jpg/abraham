@@ -193,6 +193,25 @@ def run_research(conn, question, max_sources=8, answerer=None):
             ),
         )
 
+    for signal in plan["evidence_comparison"]["signals"]:
+        claim_key = hashlib.sha256(
+            (run_id + signal["left"] + signal["right"]).encode("utf-8")
+        ).hexdigest()[:24]
+        confidence = round(float(signal.get("conflict_signal", 0.0)), 4)
+        conn.execute(
+            """INSERT OR REPLACE INTO v7_claims
+               (run_id,claim_key,claim,supporting_ids,opposing_ids,confidence)
+               VALUES(?,?,?,?,?,?)""",
+            (
+                run_id,
+                claim_key,
+                "local_disagreement_signal",
+                json.dumps([signal["left"]], ensure_ascii=False),
+                json.dumps([signal["right"]], ensure_ascii=False),
+                confidence,
+            ),
+        )
+
     answer = answerer(plan) if answerer else None
     result = {"run_id": run_id, "plan": plan, "answer": answer}
     status = "completed" if answer is not None else "prepared"
