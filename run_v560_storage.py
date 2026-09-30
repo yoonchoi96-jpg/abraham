@@ -9,6 +9,9 @@ import os
 import re
 import shutil
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -1211,207 +1214,240 @@ def atomic_write_text(path: Path, text: str) -> None:
             pass
 
 
+def _obsidian_api_enabled() -> bool:
+    return bool(os.getenv("OBSIDIAN_API_URL", "").strip())
+
+
+def _obsidian_relative_path(path: str | Path) -> str:
+    raw = str(path).replace("\\", "/").strip()
+    if not raw:
+        raise ValueError("Obsidian path is empty")
+    vault_raw = str(VAULT_PATH).replace("\\", "/").rstrip("/")
+    if raw == vault_raw:
+        return ""
+    prefix = vault_raw + "/"
+    if raw.startswith(prefix):
+        return raw[len(prefix):]
+    marker = "/vault/"
+    if marker in raw:
+        return raw.split(marker, 1)[1].lstrip("/")
+    return raw.lstrip("/")
+
+
+class ObsidianRestWriter:
+    def __init__(self):
+        self.base_url = os.getenv("OBSIDIAN_API_URL", "").rstrip("/")
+        self.api_key = os.getenv("OBSIDIAN_API_KEY", "")
+        if not self.base_url:
+            raise RuntimeError("OBSIDIAN_API_URL is required for REST writer")
+        if not self.api_key:
+            raise RuntimeError("OBSIDIAN_API_KEY is required for REST writer")
+        self.timeout = float(os.getenv("OBSIDIAN_API_TIMEOUT", "60"))
+
+    def _url(self, relative_path: str) -> str:
+        encoded = "/".join(
+            urllib.parse.quote(part, safe="")
+            for part in relative_path.replace("\\", "/").split("/")
+            if part
+        )
+        return f"{self.base_url}/vault/{encoded}"
+
+    def request(self, method: str, relative_path: str, body: bytes | None = None):
+        request = urllib.request.Request(
+            self._url(relative_path),
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "text/markdown; charset=utf-8",
+            },
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout, context=__import__("ssl")._create_unverified_context()) as response:
+                return response.status, response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return 404, exc.read()
+            raise RuntimeError(f"Obsidian REST API {method} {relative_path} failed: HTTP {exc.code}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Obsidian REST API unavailable: {exc}") from exc
+
+    def health(self):
+        request = urllib.request.Request(
+            self.base_url + "/",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout, context=__import__("ssl")._create_unverified_context()) as response:
+                if response.status != 200:
+                    raise RuntimeError(f"Obsidian REST API health check failed: HTTP {response.status}")
+                return json.loads(response.read().decode("utf-8") or "{}")
+        except Exception as exc:
+            raise RuntimeError(f"Obsidian REST API health check failed: {exc}") from exc
+
+    def read(self, relative_path: str) -> str | None:
+        status, body = self.request("GET", relative_path)
+        if status == 404:
+            return None
+        return body.decode("utf-8")
+
+    def write(self, relative_path: str, content: str):
+        self.request("PUT", relative_path, content.encode("utf-8"))
+
+    def delete(self, relative_path: str):
+        self.request("DELETE", relative_path)
+
 def apply_files(
     document_previews: list[dict],
     entity_previews: list[dict],
 ) -> dict:
+    if _obsidian_api_enabled():
+        return apply_files_via_obsidian_rest(document_previews, entity_previews)
 
-    timestamp = datetime.now().strftime(
-        "%Y%m%d_%H%M%S"
-    )
-
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_root = BACKUP_ROOT / f"v5_backup_{timestamp}"
-
     written_documents = 0
     written_entities = 0
     backed_up = 0
     renamed_documents = 0
 
-    # --------------------------------------------------------
-    # Preflight ALL document paths and targets.
-    # Nothing is modified until every document passes.
-    # --------------------------------------------------------
-
     document_operations = []
-
     for preview in document_previews:
-
-        current_path = preview.get(
-            "current_path"
-        )
-
-        target_path = preview.get(
-            "target_path"
-        )
-
-
-        # Existing document:
-        #   update the current file and optionally rename it.
-        # New document:
-        #   create target_path directly.
+        current_path = preview.get("current_path")
+        target_path = preview.get("target_path")
         if current_path:
             current = Path(current_path)
-
             if not current.exists():
-                raise RuntimeError(
-                    f"Current document disappeared: {current}"
-                )
-
-            target = (
-                Path(target_path)
-                if target_path
-                else current
-            )
-
-            # Never overwrite another existing file.
-            if (
-                target.resolve() != current.resolve()
-                and target.exists()
-            ):
-                raise RuntimeError(
-                    "Filename target collision:\n"
-                    f"CURRENT: {current}\n"
-                    f"TARGET : {target}"
-                )
-
+                raise RuntimeError(f"Current document disappeared: {current}")
+            target = Path(target_path) if target_path else current
+            if target.resolve() != current.resolve() and target.exists():
+                raise RuntimeError(f"Filename target collision:\\nCURRENT: {current}\\nTARGET : {target}")
         else:
             if not target_path:
-                raise RuntimeError(
-                    "New document has no target path: "
-                    f'{preview.get("title", "Untitled")}'
-                )
-
+                raise RuntimeError(f"New document has no target path: {preview.get('title', 'Untitled')}")
             current = None
             target = Path(target_path)
-
-            # Never overwrite an existing file.
             if target.exists():
-                raise RuntimeError(
-                    "New document target already exists:\n"
-                    f"TARGET: {target}"
-                )
+                raise RuntimeError(f"New document target already exists:\\nTARGET: {target}")
+        document_operations.append((preview, current, target))
 
-        document_operations.append(
-            (
-                preview,
-                current,
-                target,
-            )
-        )
-
-    # Detect duplicate targets.
-    target_paths = [
-        target.resolve()
-        for _, _, target in document_operations
-    ]
-
-    if len(target_paths) != len(
-        set(target_paths)
-    ):
-        raise RuntimeError(
-            "Duplicate document target filenames detected."
-        )
-
-    # --------------------------------------------------------
-    # Backup
-    # --------------------------------------------------------
+    target_paths = [target.resolve() for _, _, target in document_operations]
+    if len(target_paths) != len(set(target_paths)):
+        raise RuntimeError("Duplicate document target filenames detected.")
 
     for _, current, _ in document_operations:
-
-        # New document: nothing to back up.
         if current is None:
             continue
-
-        rel = current.relative_to(
-            VAULT_PATH
-        )
-
-        backup_file_path = (
-            backup_root / rel
-        )
-
-        backup_file_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        backup_file(
-            current,
-            backup_root,
-        )
-
+        backup_file(current, backup_root)
         backed_up += 1
 
-    # --------------------------------------------------------
-    # Write + rename documents
-    # --------------------------------------------------------
-
     for preview, current, target in document_operations:
-
         if current is None:
-            # New document: create directly at target path.
-            target.parent.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
-            atomic_write_text(
-                target,
-                preview["markdown"],
-            )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(target, preview["markdown"])
         else:
-            # Existing document: update in place first.
-            atomic_write_text(
-                current,
-                preview["markdown"],
-            )
-
-            if (
-                target.resolve()
-                != current.resolve()
-            ):
-                current.rename(
-                    target
-                )
-
+            atomic_write_text(current, preview["markdown"])
+            if target.resolve() != current.resolve():
+                current.rename(target)
                 renamed_documents += 1
-
         written_documents += 1
 
-    # --------------------------------------------------------
-    # Entities
-    # --------------------------------------------------------
-
     for preview in entity_previews:
-
-        path = Path(
-            preview["path"]
-        )
-
+        path = Path(preview["path"])
         if path.exists():
-
-            backup_file(
-                path,
-                backup_root,
-            )
-
+            backup_file(path, backup_root)
             backed_up += 1
-
-        path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        atomic_write_text(
-            path,
-            preview["markdown"],
-        )
-
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, preview["markdown"])
         written_entities += 1
 
     return {
-        "backup_root": str(
-            backup_root
-        ),
+        "backend": "filesystem",
+        "backup_root": str(backup_root),
+        "backed_up": backed_up,
+        "written_documents": written_documents,
+        "renamed_documents": renamed_documents,
+        "written_entities": written_entities,
+    }
+
+
+def apply_files_via_obsidian_rest(
+    document_previews: list[dict],
+    entity_previews: list[dict],
+) -> dict:
+    writer = ObsidianRestWriter()
+    health = writer.health()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_root = BACKUP_ROOT / f"v5_backup_{timestamp}"
+
+    operations = []
+    for preview in document_previews:
+        current_raw = preview.get("current_path")
+        target_raw = preview.get("target_path")
+        if not target_raw:
+            raise RuntimeError(f"Document has no target path: {preview.get('title', 'Untitled')}")
+        target = _obsidian_relative_path(target_raw)
+        current = _obsidian_relative_path(current_raw) if current_raw else None
+        if current and current == target:
+            current = target
+        operations.append((preview, current, target))
+
+    target_paths = [x[2] for x in operations]
+    if len(target_paths) != len(set(target_paths)):
+        raise RuntimeError("Duplicate document target filenames detected.")
+
+    # Preflight remote state and create local backups from the API before mutation.
+    remote_existing = {}
+    for _, current, target in operations:
+        if current:
+            content = writer.read(current)
+            if content is None:
+                raise RuntimeError(f"Current document not found in Obsidian: {current}")
+            remote_existing[current] = content
+            if current != target and writer.read(target) is not None:
+                raise RuntimeError(f"Filename target collision in Obsidian: {target}")
+        elif writer.read(target) is not None:
+            raise RuntimeError(f"New document target already exists in Obsidian: {target}")
+
+    entity_operations = []
+    for preview in entity_previews:
+        path = _obsidian_relative_path(preview["path"])
+        old = writer.read(path)
+        entity_operations.append((preview, path, old))
+
+    backup_root.mkdir(parents=True, exist_ok=True)
+    backed_up = 0
+    for relative, content in remote_existing.items():
+        backup_path = backup_root / relative
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(backup_path, content)
+        backed_up += 1
+    for _, path, old in entity_operations:
+        if old is not None:
+            backup_path = backup_root / path
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(backup_path, old)
+            backed_up += 1
+
+    written_documents = 0
+    renamed_documents = 0
+    for preview, current, target in operations:
+        writer.write(target, preview["markdown"])
+        if current and current != target:
+            writer.delete(current)
+            renamed_documents += 1
+        written_documents += 1
+
+    written_entities = 0
+    for preview, path, _ in entity_operations:
+        writer.write(path, preview["markdown"])
+        written_entities += 1
+
+    return {
+        "backend": "obsidian_rest_api",
+        "api_health": health,
+        "backup_root": str(backup_root),
         "backed_up": backed_up,
         "written_documents": written_documents,
         "renamed_documents": renamed_documents,
