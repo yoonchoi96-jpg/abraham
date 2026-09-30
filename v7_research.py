@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from v6_semantic import search
 
-VERSION = "7.2.0"
+VERSION = "7.3.0"
 
 
 def ensure_schema(conn):
@@ -106,34 +106,56 @@ def _roles(sources):
 
 
 def _compare_evidence(conn, sources):
-    """Cheap local conflict signal based on lexical overlap with negation."""
+    """Local disagreement signal; never labels a real-world contradiction as fact."""
     neg = {"not", "no", "never", "without", "없", "아니", "않", "못", "無"}
-    claims = []
-    for s in sources:
+    items = []
+    for source in sources:
         row = conn.execute(
             "SELECT title, canonical_text, content FROM documents WHERE readwise_id=?",
-            (s["readwise_id"],),
+            (source["readwise_id"],),
         ).fetchone()
         if not row:
             continue
         text = "\n".join(str(x or "") for x in row)
         toks = _tokens(text)
-        negative = bool(toks & neg)
-        key = hashlib.sha256(" ".join(sorted(toks)).encode()).hexdigest()[:16]
-        claims.append((key, s["readwise_id"], negative))
-    return claims
+        items.append({
+            "readwise_id": source["readwise_id"],
+            "tokens": toks,
+            "negative_signal": bool(toks & neg),
+        })
+
+    comparisons = []
+    for i, left in enumerate(items):
+        for right in items[i + 1:]:
+            overlap = len(left["tokens"] & right["tokens"]) / max(1, len(left["tokens"] | right["tokens"]))
+            negation_disagreement = left["negative_signal"] != right["negative_signal"]
+            if overlap >= 0.08 and negation_disagreement:
+                signal = round(min(1.0, overlap * 1.5), 4)
+                comparisons.append({
+                    "left": left["readwise_id"],
+                    "right": right["readwise_id"],
+                    "lexical_overlap": round(overlap, 4),
+                    "negation_disagreement": True,
+                    "conflict_signal": signal,
+                })
+    return comparisons
 
 def build_plan(conn, question, max_sources=8):
     max_sources = max(1, min(int(max_sources), 8))
     candidates = search(conn, question, min(50, max_sources * 8))
     sources = _roles(_diverse_sources(conn, question, candidates, max_sources))
     comparisons = _compare_evidence(conn, sources)
+    retrieval_confidence = round(
+        min(1.0, sum(float(x.get("score", 0.0)) for x in sources[:4]) / max(1, min(4, len(sources)))),
+        4,
+    )
     return {
         "question": question,
         "sources": sources,
+        "confidence": retrieval_confidence,
         "evidence_comparison": {
             "items": len(comparisons),
-            "negative_signal_count": sum(1 for _,_,negative in comparisons if negative),
+            "signals": comparisons,
         },
         "steps": [
             "decompose",
