@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from deepseek_adapter import get_deepseek_client
+from gemini_adapter import get_gemini_client
 
 from abraham_sqlite import load_documents, load_documents_by_ids, connect as connect_db
 from abraham_incremental import (
@@ -541,7 +542,7 @@ def _validate_rating(item, expected_id):
 
 def _rate_batch(client, documents):
     response=client.models.generate_content(
-        model=MODEL,
+        model=os.getenv("GEMINI_RATING_MODEL", "gemini-3.6-flash"),
         contents=_build_rating_prompt(documents),
         config={
             "response_mime_type": "application/json",
@@ -590,7 +591,7 @@ def rate_documents(documents,args):
         if args.apply and pending: mark_started(conn,pending,"rating",worker_id="abraham-v5.6")
     if not pending: return {},pending,skipped
     if not args.apply: return {},pending,skipped
-    client=get_korean_client(); results={}
+    client=get_gemini_client(); results={}
     try:
         for start in range(0,len(pending),KOREAN_BATCH_SIZE):
             for item in _rate_batch(client,pending[start:start+KOREAN_BATCH_SIZE]): results[item["document_id"]]=item
