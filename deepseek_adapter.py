@@ -33,22 +33,45 @@ class DeepSeekClient:
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": contents}],
-            "stream": False,\n            "max_tokens": int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768")),
+            "stream": False,
+            "max_tokens": int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768")),
         }
 
         # Abraham already instructs the model to emit JSON and validates it
         # locally. DeepSeek's JSON Output mode adds a provider-side guarantee.
         if config.get("response_mime_type") == "application/json":
-            payload["response_format"] = {"type": "json_object"}\n\n        # Gemini-only schema/service-tier fields are intentionally ignored.
+            payload["response_format"] = {"type": "json_object"}
+
+        # Gemini-only schema/service-tier fields are intentionally ignored.
 
         # Default to non-thinking for high-volume translation/classification.
         # Set DEEPSEEK_THINKING=enabled and optionally
         # DEEPSEEK_REASONING_EFFORT=low/high/max for harder workloads.
-        thinking = os.getenv("DEEPSEEK_THINKING", "disabled").lower()
-        if thinking in {"enabled", "disabled"}:
-            payload["thinking"] = {"type": thinking}
+        thinking = str(
+            config.get(
+                "thinking",
+                os.getenv("DEEPSEEK_THINKING", "disabled"),
+            )
+        ).lower()
+        if thinking not in {"enabled", "disabled"}:
+            raise ValueError("thinking must be 'enabled' or 'disabled'")
+        payload["thinking"] = {"type": thinking}
         if thinking == "enabled":
-            payload["reasoning_effort"] = os.getenv("DEEPSEEK_REASONING_EFFORT", "low")
+            effort = str(
+                config.get(
+                    "reasoning_effort",
+                    os.getenv("DEEPSEEK_REASONING_EFFORT", "low"),
+                )
+            ).lower()
+            effort = {
+                "minimal": "low",
+                "medium": "high",
+                "xhigh": "high",
+                "ultra": "max",
+            }.get(effort, effort)
+            if effort not in {"low", "high", "max"}:
+                raise ValueError("reasoning_effort must be low, high, or max")
+            payload["reasoning_effort"] = effort
 
         timeout = int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "600"))
         retries = max(1, int(os.getenv("DEEPSEEK_MAX_RETRIES", "4")))
