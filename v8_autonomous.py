@@ -11,7 +11,7 @@ import sqlite3
 from datetime import datetime, timezone
 from v6_semantic import related
 
-VERSION = "8.1.0"
+VERSION = "8.2.0"
 
 
 def _now() -> str:
@@ -55,6 +55,8 @@ def ensure_schema(conn):
     );
     CREATE INDEX IF NOT EXISTS idx_v8_processed_signature
         ON v8_processed_stages(stage_signature);
+    CREATE INDEX IF NOT EXISTS idx_v8_events_entity
+        ON v8_events(entity_key,created_at);
     """)
     conn.commit()
 
@@ -131,6 +133,11 @@ def detect(conn, documents, max_documents=250):
             (rid, row["stage"], signature, now),
         )
 
+        if not rel:
+            continue
+
+        # Ignore weak connections; V8 should produce candidates, not noise.
+        rel = [x for x in rel if float(x.get("score", 0.0)) >= 0.15]
         if not rel:
             continue
 
