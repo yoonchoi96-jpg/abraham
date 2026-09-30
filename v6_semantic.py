@@ -74,8 +74,6 @@ def ensure_schema(conn):
         );
         CREATE INDEX IF NOT EXISTS idx_v6_vectors_hash
             ON v6_vectors(content_hash);
-        CREATE INDEX IF NOT EXISTS idx_v6_vectors_provider
-            ON v6_vectors(provider,model);
 
         CREATE TABLE IF NOT EXISTS v6_tokens(
             token TEXT NOT NULL,
