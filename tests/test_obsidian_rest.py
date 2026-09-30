@@ -1,5 +1,6 @@
 import json
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -24,7 +25,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        path = self.path.split("/vault/", 1)[-1]
+        path = urllib.parse.unquote(self.path.split("/vault/", 1)[-1])
         if path not in self.files:
             self.send_response(404)
             self.end_headers()
