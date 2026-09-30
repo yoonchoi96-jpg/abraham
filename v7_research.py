@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from v6_semantic import search
 
-VERSION = "7.1.0"
+VERSION = "7.2.0"
 
 
 def ensure_schema(conn):
@@ -37,6 +37,15 @@ def ensure_schema(conn):
         );
         CREATE INDEX IF NOT EXISTS idx_v7_evidence_run
             ON v7_evidence(run_id,rank);
+        CREATE TABLE IF NOT EXISTS v7_claims(
+            run_id TEXT NOT NULL,
+            claim_key TEXT NOT NULL,
+            claim TEXT NOT NULL,
+            supporting_ids TEXT NOT NULL,
+            opposing_ids TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            PRIMARY KEY(run_id,claim_key)
+        );
         """
     )
     conn.commit()
@@ -94,13 +103,38 @@ def _roles(sources):
     return out
 
 
+
+
+def _compare_evidence(conn, sources):
+    """Cheap local conflict signal based on lexical overlap with negation."""
+    neg = {"not", "no", "never", "without", "없", "아니", "않", "못", "無"}
+    claims = []
+    for s in sources:
+        row = conn.execute(
+            "SELECT title, canonical_text, content FROM documents WHERE readwise_id=?",
+            (s["readwise_id"],),
+        ).fetchone()
+        if not row:
+            continue
+        text = "\n".join(str(x or "") for x in row)
+        toks = _tokens(text)
+        negative = bool(toks & neg)
+        key = hashlib.sha256(" ".join(sorted(toks)).encode()).hexdigest()[:16]
+        claims.append((key, s["readwise_id"], negative))
+    return claims
+
 def build_plan(conn, question, max_sources=8):
     max_sources = max(1, min(int(max_sources), 8))
     candidates = search(conn, question, min(50, max_sources * 8))
     sources = _roles(_diverse_sources(conn, question, candidates, max_sources))
+    comparisons = _compare_evidence(conn, sources)
     return {
         "question": question,
         "sources": sources,
+        "evidence_comparison": {
+            "items": len(comparisons),
+            "negative_signal_count": sum(1 for _,_,negative in comparisons if negative),
+        },
         "steps": [
             "decompose",
             "retrieve",
