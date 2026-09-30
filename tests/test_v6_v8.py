@@ -2,6 +2,7 @@ import sqlite3
 
 from v6_semantic import index_documents, search
 from v8_autonomous import detect
+import v8_autonomous
 
 
 def db():
@@ -116,3 +117,40 @@ def test_v8_weak_related_is_filtered():
     c.commit()
     result = detect(c, docs, 10)
     assert result["checked"] == 1
+
+
+
+def test_v6_migrates_legacy_vector_schema():
+    c = db()
+    c.execute("""CREATE TABLE v6_vectors(
+        readwise_id TEXT PRIMARY KEY,
+        content_hash TEXT NOT NULL,
+        vector_json TEXT NOT NULL,
+        dims INTEGER NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""")
+    c.execute("INSERT INTO v6_vectors(readwise_id,content_hash,vector_json,dims) VALUES('old','h','{}',384)")
+    c.commit()
+    from v6_semantic import ensure_schema
+    ensure_schema(c)
+    cols = {r["name"] for r in c.execute("PRAGMA table_info(v6_vectors)").fetchall()}
+    assert {"provider", "model"} <= cols
+    row = c.execute("SELECT provider,model FROM v6_vectors WHERE readwise_id='old'").fetchone()
+    assert row["provider"] == "local_hash"
+    assert row["model"] == "hash-v1"
+
+
+def test_v8_weak_related_is_rejected(monkeypatch):
+    c = db()
+    docs = [{"readwise_id": "1", "title": "AI", "canonical_text": "AI chips"}]
+    index_documents(c, docs)
+    c.execute("""INSERT INTO document_stages(
+        readwise_id, stage, status, content_hash, result_hash, result_json, updated_at
+    ) VALUES('1','rating','completed','c1','r1','{}','2026-01-01')""")
+    c.commit()
+    monkeypatch.setattr(v8_autonomous, "related", lambda conn, rid, limit: [
+        {"readwise_id": "2", "score": 0.149}
+    ])
+    result = detect(c, docs, 10)
+    assert result["checked"] == 1
+    assert result["events_created"] == 0
