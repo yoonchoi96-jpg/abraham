@@ -17,7 +17,7 @@ import re
 import sqlite3
 from collections import Counter
 
-VERSION = "6.1.0"
+VERSION = "6.2.0"
 DIMS = 384
 TOKEN_RE = re.compile(
     r"[A-Za-z0-9_\-]{2,}|[가-힣]{2,}|[一-龯]{2,}|[ぁ-ゔァ-ヴー]{2,}"
@@ -58,10 +58,14 @@ def ensure_schema(conn):
             content_hash TEXT NOT NULL,
             vector_json TEXT NOT NULL,
             dims INTEGER NOT NULL,
+            provider TEXT NOT NULL DEFAULT 'local_hash',
+            model TEXT,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_v6_vectors_hash
             ON v6_vectors(content_hash);
+        CREATE INDEX IF NOT EXISTS idx_v6_vectors_provider
+            ON v6_vectors(provider,model);
 
         CREATE TABLE IF NOT EXISTS v6_tokens(
             token TEXT NOT NULL,
@@ -110,15 +114,17 @@ def index_documents(conn, docs):
         conn.execute(
             """
             INSERT INTO v6_vectors
-                (readwise_id,content_hash,vector_json,dims,updated_at)
-            VALUES(?,?,?,?,CURRENT_TIMESTAMP)
+                (readwise_id,content_hash,vector_json,dims,provider,model,updated_at)
+            VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)
             ON CONFLICT(readwise_id) DO UPDATE SET
                 content_hash=excluded.content_hash,
                 vector_json=excluded.vector_json,
                 dims=excluded.dims,
+                provider=excluded.provider,
+                model=excluded.model,
                 updated_at=CURRENT_TIMESTAMP
             """,
-            (rid, h, json.dumps(vec, separators=(",", ":")), DIMS),
+            (rid, h, json.dumps(vec, separators=(",", ":")), DIMS, "local_hash", "hash-v1"),
         )
 
         # Rebuild this document's inverted-index rows only when its content changed.
