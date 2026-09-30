@@ -17,7 +17,7 @@ import re
 import sqlite3
 from collections import Counter
 
-VERSION = "6.2.0"
+VERSION = "6.3.0"
 DIMS = 384
 TOKEN_RE = re.compile(
     r"[A-Za-z0-9_\-]{2,}|[가-힣]{2,}|[一-龯]{2,}|[ぁ-ゔァ-ヴー]{2,}"
@@ -48,6 +48,16 @@ def cosine(a, b):
     if len(a) > len(b):
         a, b = b, a
     return sum(v * b.get(k, 0.0) for k, v in a.items())
+
+
+def _migrate_columns(conn):
+    cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(v6_vectors)").fetchall()}
+    if "provider" not in cols:
+        conn.execute("ALTER TABLE v6_vectors ADD COLUMN provider TEXT NOT NULL DEFAULT 'local_hash'")
+    if "model" not in cols:
+        conn.execute("ALTER TABLE v6_vectors ADD COLUMN model TEXT")
+    conn.execute("UPDATE v6_vectors SET provider='local_hash' WHERE provider IS NULL OR provider=''")
+    conn.execute("UPDATE v6_vectors SET model='hash-v1' WHERE provider='local_hash' AND (model IS NULL OR model='')")
 
 
 def ensure_schema(conn):
@@ -90,8 +100,10 @@ def _text(d):
     return (d.get("title", "") + "\n" + (d.get("canonical_text") or d.get("content") or "")).strip()
 
 
-def index_documents(conn, docs):
+def index_documents(conn, docs, provider="local_hash", model="hash-v1"):
     ensure_schema(conn)
+    if provider != "local_hash" or model != "hash-v1":
+        raise ValueError("Only local_hash/hash-v1 is enabled; no API call is made.")
     added = updated = skipped = 0
 
     for d in docs:
@@ -101,13 +113,13 @@ def index_documents(conn, docs):
         text = _text(d)
         h = _hash(text)
         old = conn.execute(
-            "SELECT content_hash FROM v6_vectors WHERE readwise_id=?", (rid,)
+            "SELECT content_hash,provider,model,dims FROM v6_vectors WHERE readwise_id=?", (rid,)
         ).fetchone()
-        if old and old[0] == h:
+        if old and old[0] == h and old[1] == provider and old[2] == model and int(old[3]) == DIMS:
             skipped += 1
             continue
 
-        vec = vector(text)
+        vec = embed_text(text, provider, model)
         counts = Counter(tokenize(text))
         total = sum(counts.values()) or 1
 
@@ -124,7 +136,7 @@ def index_documents(conn, docs):
                 model=excluded.model,
                 updated_at=CURRENT_TIMESTAMP
             """,
-            (rid, h, json.dumps(vec, separators=(",", ":")), DIMS, "local_hash", "hash-v1"),
+            (rid, h, json.dumps(vec, separators=(",", ":")), DIMS, provider, model),
         )
 
         # Rebuild this document's inverted-index rows only when its content changed.
