@@ -33,13 +33,13 @@ class DeepSeekClient:
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": contents}],
-            "stream": False,
+            "stream": False,\n            "max_tokens": int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768")),
         }
 
         # Abraham already instructs the model to emit JSON and validates it
         # locally. DeepSeek's JSON Output mode adds a provider-side guarantee.
         if config.get("response_mime_type") == "application/json":
-            payload["response_format"] = {"type": "json_object"}
+            payload["response_format"] = {"type": "json_object"}\n\n        # Gemini-only schema/service-tier fields are intentionally ignored.
 
         # Default to non-thinking for high-volume translation/classification.
         # Set DEEPSEEK_THINKING=enabled and optionally
@@ -51,7 +51,7 @@ class DeepSeekClient:
             payload["reasoning_effort"] = os.getenv("DEEPSEEK_REASONING_EFFORT", "low")
 
         timeout = int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "600"))
-        retries = int(os.getenv("DEEPSEEK_MAX_RETRIES", "3"))
+        retries = max(1, int(os.getenv("DEEPSEEK_MAX_RETRIES", "4")))
 
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
