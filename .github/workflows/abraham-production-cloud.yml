@@ -97,7 +97,8 @@ jobs:
 
       - name: Run Abraham
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MODEL: deepseek-flash
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
           ABRAHAM_VAULT_PATH: ${{ github.workspace }}/vault
           ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
