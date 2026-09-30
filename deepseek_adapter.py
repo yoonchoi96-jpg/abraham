@@ -22,7 +22,7 @@ class _Models:
 
 
 class DeepSeekClient:
-    """Small drop-in adapter for the subset of google-genai used by Abraham."""
+    """Provider adapter for the DeepSeek Chat Completions API used by Abraham."""
 
     def __init__(self, api_key: str, base_url: str = "https://api.deepseek.com"):
         self.api_key = api_key
