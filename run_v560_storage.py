@@ -18,6 +18,7 @@ from pathlib import Path
 
 from deepseek_adapter import get_deepseek_client
 from gemini_adapter import get_gemini_client
+from entity_classifier import classify_entity_batch
 
 from abraham_sqlite import load_documents, load_documents_by_ids, connect as connect_db
 from abraham_incremental import (
@@ -1521,6 +1522,45 @@ def prepare_source_content(documents):
     return available, unavailable
 
 
+
+def classify_entities(registry, args):
+    if not registry or not args.apply:
+        return {}, [], []
+
+    entities = list(registry.values())
+    reclassify_all = os.getenv("ABRAHAM_RECLASSIFY_ENTITIES", "0") == "1"
+    pending = [
+        e for e in entities
+        if reclassify_all or str(e.get("entity_type") or "Other") == "Other"
+    ]
+    if not pending:
+        return {}, [], entities
+
+    client = get_gemini_client()
+    batch_size = int(os.getenv("ENTITY_CLASSIFICATION_BATCH_SIZE", "50"))
+    results = {}
+    for start in range(0, len(pending), batch_size):
+        batch = pending[start:start + batch_size]
+        results.update(classify_entity_batch(client, batch))
+
+    with connect_db() as conn:
+        columns = {str(r["name"]) for r in conn.execute('PRAGMA table_info("entities")').fetchall()}
+        if "entity_type" not in columns:
+            raise RuntimeError("entities.entity_type column is required")
+        for entity_id, entity_type in results.items():
+            conn.execute(
+                "UPDATE entities SET entity_type=? WHERE entity_id=?",
+                (entity_type, entity_id),
+            )
+        conn.commit()
+
+    for entity in entities:
+        if entity["entity_id"] in results:
+            entity["entity_type"] = results[entity["entity_id"]]
+
+    return results, pending, [e for e in entities if e["entity_id"] not in results]
+
+
 def _entity_render_inputs(entity, entity_relation_links):
     entity_id = entity["entity_id"]
     outgoing = [x for x in entity_relation_links if x.get("subject_entity_id") == entity_id]
@@ -1641,6 +1681,11 @@ def run_pipeline(args):
     # ------------------------------------------------------------
     relations = get_validated_relations(sqlite_relations)
     registry = build_entity_registry(documents)
+
+    entity_classification_results, entity_classification_pending, entity_classification_skipped = classify_entities(registry, args)
+    if entity_classification_results:
+        registry = build_entity_registry(documents)
+
     document_entity_links = build_document_entity_links(documents)
     entity_relation_links = build_entity_relation_links(relations)
 
@@ -1814,6 +1859,8 @@ def run_pipeline(args):
             "document_render_skipped": len(render_skipped),
             "entity_render_pending": len(entity_pending),
             "entity_render_skipped": len(entity_skipped),
+            "entity_classification_pending": len(entity_classification_pending),
+            "entity_classification_skipped": len(entity_classification_skipped),
         },
         "korean_presentation": {
             "enabled": True,
@@ -1891,6 +1938,7 @@ def run_pipeline(args):
     print("SQLite documents        :", len(documents))
     print("Korean pending          :", len(korean_pending))
     print("Document render pending :", len(render_pending))
+    print("Entity classification   :", len(entity_classification_results))
     print("Entity render pending   :", len(entity_pending))
     print("Korean skipped          :", len(korean_skipped))
     print("Document render skipped :", len(render_skipped))
