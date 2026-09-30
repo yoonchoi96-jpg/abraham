@@ -1,12 +1,18 @@
-import json
+import pytest
 
 from deepseek_adapter import DeepSeekClient
 
 
 def test_deepseek_json_payload_uses_provider_fields(monkeypatch):
-    monkeypatch.setenv("DEEPSEEK_MAX_TOKENS", "12345")
     client = DeepSeekClient("test-key")
-    payload = client._build_payload(
+    captured = {}
+
+    def fake_request(payload):
+        captured.update(payload)
+        return type("Response", (), {"text": '{"ok": true}'})()
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    client.generate_content(
         model="deepseek-flash",
         contents="Return JSON.",
         config={
@@ -17,22 +23,46 @@ def test_deepseek_json_payload_uses_provider_fields(monkeypatch):
             "service_tier": "flex",
         },
     )
-    assert payload["response_format"] == {"type": "json_object"}
-    assert payload["max_tokens"] == 4096
-    assert payload["thinking"] == {"type": "disabled"}
-    assert "response_schema" not in payload
-    assert "service_tier" not in payload
+    assert captured["response_format"] == {"type": "json_object"}
+    assert captured["max_tokens"] == 32768
+    assert captured["thinking"] == {"type": "disabled"}
+    assert "response_schema" not in captured
+    assert "service_tier" not in captured
 
 
-def test_deepseek_thinking_effort_is_configurable():
+def test_deepseek_default_output_limit_is_configurable(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_MAX_TOKENS", "12345")
     client = DeepSeekClient("test-key")
-    payload = client._build_payload(
+    captured = {}
+
+    def fake_request(payload):
+        captured.update(payload)
+        return type("Response", (), {"text": '{"ok": true}'})()
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    client.generate_content(
+        model="deepseek-flash",
+        contents="Return JSON.",
+        config={},
+    )
+    assert captured["max_tokens"] == 12345
+
+
+def test_deepseek_thinking_effort_is_configurable(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_THINKING", "enabled")
+    monkeypatch.setenv("DEEPSEEK_REASONING_EFFORT", "high")
+    client = DeepSeekClient("test-key")
+    captured = {}
+
+    def fake_request(payload):
+        captured.update(payload)
+        return type("Response", (), {"text": '{"ok": true}'})()
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    client.generate_content(
         model="deepseek-flash",
         contents="Think.",
-        config={
-            "thinking": "enabled",
-            "reasoning_effort": "high",
-        },
+        config={},
     )
-    assert payload["thinking"] == {"type": "enabled"}
-    assert payload["reasoning_effort"] == "high"
+    assert captured["thinking"] == {"type": "enabled"}
+    assert captured["reasoning_effort"] == "high"
