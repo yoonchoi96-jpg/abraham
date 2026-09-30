@@ -87,6 +87,8 @@ def ensure_schema(conn):
             ON v6_tokens(readwise_id);
         """
     )
+    _migrate_columns(conn)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_v6_vectors_provider ON v6_vectors(provider,model)")
     conn.commit()
 
 
