@@ -34,7 +34,7 @@ jobs:
       - name: Compile active V5 Python
         run: |
           set -euo pipefail
-          python -m py_compile abraham_incremental.py abraham_sqlite.py abraham_storage.py run_v560_storage.py scripts/*.py tests/*.py
+          python -m py_compile abraham_incremental.py abraham_sqlite.py abraham_storage.py deepseek_adapter.py run_v560_storage.py scripts/*.py tests/*.py
       - name: Run regression tests
         run: |
           python -m pip install pytest
