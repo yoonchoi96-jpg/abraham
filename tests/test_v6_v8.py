@@ -158,7 +158,7 @@ def test_v8_weak_related_is_rejected(monkeypatch):
 
 
 
-def test_v7_persists_disagreement_signals():
+def test_v7_persists_disagreement_signals(monkeypatch):
     c = db()
     docs = [
         {"readwise_id": "1", "title": "Claim A", "canonical_text": "AI chips improve performance but no evidence"},
@@ -168,6 +168,10 @@ def test_v7_persists_disagreement_signals():
     from v7_research import _compare_evidence
     signals = _compare_evidence(c, [{"readwise_id": "1"}, {"readwise_id": "2"}])
     assert len(signals) >= 1
+    monkeypatch.setattr("v7_research.search", lambda conn, question, limit: [
+        {"readwise_id": "1", "score": 0.9, "title": "Claim A"},
+        {"readwise_id": "2", "score": 0.8, "title": "Claim B"},
+    ])
     result = run_research(c, "AI chips performance", 2)
     assert "confidence" in result["plan"]
     assert c.execute("SELECT COUNT(*) FROM v7_claims").fetchone()[0] >= 1
