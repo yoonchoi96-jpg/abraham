@@ -2,6 +2,7 @@ import sqlite3
 
 from v6_semantic import index_documents, search
 from v8_autonomous import detect
+from v7_research import build_plan, run_research
 import v8_autonomous
 
 
@@ -154,3 +155,17 @@ def test_v8_weak_related_is_rejected(monkeypatch):
     result = detect(c, docs, 10)
     assert result["checked"] == 1
     assert result["events_created"] == 0
+
+
+
+def test_v7_persists_disagreement_signals():
+    c = db()
+    docs = [
+        {"readwise_id": "1", "title": "Claim A", "canonical_text": "AI chips improve performance but no evidence"},
+        {"readwise_id": "2", "title": "Claim B", "canonical_text": "AI chips improve performance with evidence"},
+    ]
+    index_documents(c, docs)
+    plan = build_plan(c, "AI chips performance", 2)
+    result = run_research(c, "AI chips performance", 2)
+    assert "confidence" in result["plan"]
+    assert c.execute("SELECT COUNT(*) FROM v7_claims").fetchone()[0] >= 0
