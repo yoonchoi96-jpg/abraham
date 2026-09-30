@@ -25,14 +25,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install Obsidian CLI
-        run: npm install --global obsidian-headless
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -56,30 +48,33 @@ jobs:
       - name: Prepare runtime
         run: mkdir -p data vault 90_Dashboard/auto_reports
 
-      - name: Restore Obsidian Sync vault
+      - name: Check Obsidian REST API
         env:
-          OBSIDIAN_AUTH_TOKEN: ${{ secrets.OBSIDIAN_AUTH_TOKEN }}
-          OBSIDIAN_VAULT_NAME: ${{ secrets.OBSIDIAN_VAULT_NAME }}
-          OBSIDIAN_SYNC_PASSWORD: ${{ secrets.OBSIDIAN_SYNC_PASSWORD }}
+          OBSIDIAN_API_URL: ${{ secrets.OBSIDIAN_API_URL }}
+          OBSIDIAN_API_KEY: ${{ secrets.OBSIDIAN_API_KEY }}
         run: |
           set -euo pipefail
-          test -n "${OBSIDIAN_AUTH_TOKEN}" || { echo "Missing OBSIDIAN_AUTH_TOKEN"; exit 1; }
-          test -n "${OBSIDIAN_VAULT_NAME}" || { echo "Missing OBSIDIAN_VAULT_NAME"; exit 1; }
+          test -n "${OBSIDIAN_API_URL}" || { echo "Missing OBSIDIAN_API_URL"; exit 1; }
+          test -n "${OBSIDIAN_API_KEY}" || { echo "Missing OBSIDIAN_API_KEY"; exit 1; }
+          python - <<'PY'
+          import json
+          import os
+          import ssl
+          import urllib.request
 
-          if ob sync-status --path "${GITHUB_WORKSPACE}/vault" --json >/tmp/abraham-sync-status.json 2>/tmp/abraham-sync-status.err; then
-            cat /tmp/abraham-sync-status.json
-          else
-            echo "Vault is not configured locally; bootstrapping Obsidian Sync."
-            cat /tmp/abraham-sync-status.err >&2 || true
-            if [ -n "${OBSIDIAN_SYNC_PASSWORD}" ]; then
-              ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions" --password "${OBSIDIAN_SYNC_PASSWORD}"
-            else
-              ob sync-setup --vault "${OBSIDIAN_VAULT_NAME}" --path "${GITHUB_WORKSPACE}/vault" --device-name "abraham-github-actions"
-            fi
-          fi
+          url = os.environ["OBSIDIAN_API_URL"].rstrip("/") + "/"
+          req = urllib.request.Request(
+              url,
+              headers={"Authorization": f"Bearer {os.environ['OBSIDIAN_API_KEY']}"},
+          )
+          context = ssl._create_unverified_context()
+          with urllib.request.urlopen(req, timeout=30, context=context) as response:
+              payload = json.loads(response.read().decode("utf-8"))
+              if response.status != 200 or payload.get("service") != "Obsidian Local REST API":
+                  raise SystemExit(f"Unexpected Obsidian API response: {payload}")
+          print("Obsidian REST API reachable and authenticated.")
+          PY
 
-          ob sync-config --path "${GITHUB_WORKSPACE}/vault" --mode bidirectional --conflict-strategy merge
-          ob sync --path "${GITHUB_WORKSPACE}/vault"
       - name: Restore SQLite state
         env:
           GH_TOKEN: ${{ github.token }}
@@ -98,6 +93,8 @@ jobs:
       - name: Run Abraham
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OBSIDIAN_API_URL: ${{ secrets.OBSIDIAN_API_URL }}
+          OBSIDIAN_API_KEY: ${{ secrets.OBSIDIAN_API_KEY }}
           MODEL: deepseek-flash
           DEEPSEEK_THINKING: disabled
           DEEPSEEK_MAX_TOKENS: "32768"
@@ -107,7 +104,6 @@ jobs:
           ABRAHAM_RATING_THINKING: disabled
           ABRAHAM_RATING_MAX_TOKENS: "16384"
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
-          ABRAHAM_VAULT_PATH: ${{ github.workspace }}/vault
           ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
           ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
@@ -121,16 +117,6 @@ jobs:
             echo "No workload limit: process the full pending/changed set until the runner time budget is exhausted."
             python run_v560_storage.py --apply
           fi
-
-      - name: Push vault through Obsidian Sync
-        env:
-          OBSIDIAN_AUTH_TOKEN: ${{ secrets.OBSIDIAN_AUTH_TOKEN }}
-          OBSIDIAN_VAULT_NAME: ${{ secrets.OBSIDIAN_VAULT_NAME }}
-          OBSIDIAN_SYNC_PASSWORD: ${{ secrets.OBSIDIAN_SYNC_PASSWORD }}
-        run: |
-          set -euo pipefail
-          ob sync-config --path "${GITHUB_WORKSPACE}/vault" --mode bidirectional --conflict-strategy merge
-          ob sync --path "${GITHUB_WORKSPACE}/vault"
 
       - name: Run V6-V8 intelligence
         env:
