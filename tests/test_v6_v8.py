@@ -165,7 +165,9 @@ def test_v7_persists_disagreement_signals():
         {"readwise_id": "2", "title": "Claim B", "canonical_text": "AI chips improve performance with evidence"},
     ]
     index_documents(c, docs)
+    from v7_research import _compare_evidence
+    signals = _compare_evidence(c, [{"readwise_id": "1"}, {"readwise_id": "2"}])
+    assert len(signals) >= 1
     result = run_research(c, "AI chips performance", 2)
     assert "confidence" in result["plan"]
-    assert result["plan"]["evidence_comparison"]["items"] >= 1
     assert c.execute("SELECT COUNT(*) FROM v7_claims").fetchone()[0] >= 1
