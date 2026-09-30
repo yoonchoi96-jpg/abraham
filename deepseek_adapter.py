@@ -37,6 +37,12 @@ class DeepSeekClient:
             "max_tokens": int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768")),
         }
 
+        if config.get("max_output_tokens") is not None:
+            payload["max_tokens"] = max(
+                1,
+                min(int(config["max_output_tokens"]), 393216),
+            )
+
         # Abraham already instructs the model to emit JSON and validates it
         # locally. DeepSeek's JSON Output mode adds a provider-side guarantee.
         if config.get("response_mime_type") == "application/json":
