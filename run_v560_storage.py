@@ -243,7 +243,7 @@ Documents:
 
 
 # ============================================================
-# GEMINI FREE-TIER RPM LIMITER
+# DEEPSEEK JSON OUTPUT / RETRY CONFIGURATION
 # ============================================================
 
 def translate_korean_batch(
@@ -264,43 +264,8 @@ def translate_korean_batch(
                 contents=prompt,
                 config={
                     "response_mime_type": "application/json",
-                    "response_schema": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "documents": {
-                                "type": "ARRAY",
-                                "items": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "index": {
-                                            "type": "INTEGER",
-                                        },
-                                        "korean_title": {
-                                            "type": "STRING",
-                                        },
-                                        "korean_text": {
-                                            "type": "STRING",
-                                        },
-                                        "translation_notes": {
-                                            "type": "ARRAY",
-                                            "items": {
-                                                "type": "STRING",
-                                            },
-                                        },
-                                    },
-                                    "required": [
-                                        "index",
-                                        "korean_title",
-                                        "korean_text",
-                                    ],
-                                },
-                            },
-                        },
-                        "required": [
-                            "documents",
-                        ],
-                    },
-                    "service_tier": "flex",
+                    "thinking": os.getenv("ABRAHAM_TRANSLATION_THINKING", "disabled"),
+                    "max_output_tokens": int(os.getenv("ABRAHAM_TRANSLATION_MAX_TOKENS", "32768")),
                 },
             )
 
@@ -572,7 +537,15 @@ def _validate_rating(item, expected_id):
     return clean
 
 def _rate_batch(client, documents):
-    response=client.models.generate_content(model=MODEL,contents=_build_rating_prompt(documents),config={"response_mime_type":"application/json","service_tier":"flex"})
+    response=client.models.generate_content(
+        model=MODEL,
+        contents=_build_rating_prompt(documents),
+        config={
+            "response_mime_type": "application/json",
+            "thinking": os.getenv("ABRAHAM_RATING_THINKING", "disabled"),
+            "max_output_tokens": int(os.getenv("ABRAHAM_RATING_MAX_TOKENS", "16384")),
+        },
+    )
     data=json.loads(response.text.strip().strip("`").replace("json\n","",1))
     items=data.get("ratings")
     if not isinstance(items,list): raise ValueError("ratings must be a list")
