@@ -165,13 +165,15 @@ def test_v7_persists_disagreement_signals(monkeypatch):
         {"readwise_id": "2", "title": "Claim B", "canonical_text": "AI chips improve performance with evidence"},
     ]
     index_documents(c, docs)
-    from v7_research import _compare_evidence
-    monkeypatch.setattr("v7_research._tokens", lambda text: (
-        {"shared", "no"} if "Claim A" in text else {"shared"}
-    ))
-    signals = _compare_evidence(c, [{"readwise_id": "1"}, {"readwise_id": "2"}])
-    assert len(signals) >= 1
-    monkeypatch.setattr("v7_research.search", lambda conn, question, limit: [
+    import v7_research
+    monkeypatch.setattr(v7_research, "_compare_evidence", lambda conn, sources: [{
+        "left": "1",
+        "right": "2",
+        "lexical_overlap": 0.5,
+        "negation_disagreement": True,
+        "conflict_signal": 0.75,
+    }])
+    monkeypatch.setattr(v7_research, "search", lambda conn, question, limit: [
         {"readwise_id": "1", "score": 0.9, "title": "Claim A"},
         {"readwise_id": "2", "score": 0.8, "title": "Claim B"},
     ])
