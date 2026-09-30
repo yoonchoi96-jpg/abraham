@@ -87,3 +87,32 @@ def test_v8_watermark_and_change_detection():
     third = detect(c, d)
     assert third["checked"] == 1
     assert third["events_created"] == 1
+
+
+
+def test_v6_provider_metadata():
+    c = db()
+    d = [{"readwise_id": "1", "title": "AI", "canonical_text": "GPU semiconductor"}]
+    index_documents(c, d)
+    row = c.execute(
+        "SELECT provider, model FROM v6_vectors WHERE readwise_id='1'"
+    ).fetchone()
+    assert row["provider"] == "local_hash"
+    assert row["model"] == "hash-v1"
+
+
+def test_v8_weak_related_is_filtered():
+    c = db()
+    docs = [
+        {"readwise_id": "1", "title": "AI", "canonical_text": "AI chips"},
+        {"readwise_id": "2", "title": "Random", "canonical_text": "AI chips"},
+    ]
+    index_documents(c, docs)
+    c.execute(
+        """INSERT INTO document_stages(
+            readwise_id, stage, status, content_hash, result_hash, result_json, updated_at
+        ) VALUES('1','rating','completed','c1','r1','{}','2026-01-01')"""
+    )
+    c.commit()
+    result = detect(c, docs, 10)
+    assert result["checked"] == 1
