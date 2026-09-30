@@ -166,6 +166,9 @@ def test_v7_persists_disagreement_signals(monkeypatch):
     ]
     index_documents(c, docs)
     from v7_research import _compare_evidence
+    monkeypatch.setattr("v7_research._tokens", lambda text: (
+        {"shared", "no"} if "Claim A" in text else {"shared"}
+    ))
     signals = _compare_evidence(c, [{"readwise_id": "1"}, {"readwise_id": "2"}])
     assert len(signals) >= 1
     monkeypatch.setattr("v7_research.search", lambda conn, question, limit: [
