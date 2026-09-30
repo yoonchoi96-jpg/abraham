@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from google import genai
+from deepseek_adapter import get_deepseek_client
 
 from abraham_sqlite import load_documents, load_documents_by_ids, connect as connect_db
 from abraham_incremental import (
@@ -35,7 +35,7 @@ load_dotenv()
 
 MODEL = os.getenv(
     "MODEL",
-    "gemini-3.1-flash-lite",
+    "deepseek-flash",
 )
 
 # Cloud-ready paths: the same code runs locally or on a Linux VM.
@@ -141,16 +141,7 @@ def get_validated_relations(relations) -> list[dict]:
 
 
 def get_korean_client():
-    api_key = os.getenv("GEMINI_API_KEY")
-
-    if not api_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY is missing."
-        )
-
-    return genai.Client(
-        api_key=api_key
-    )
+    return get_deepseek_client()
 
 
 def build_korean_prompt(documents):
