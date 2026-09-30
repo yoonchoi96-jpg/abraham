@@ -100,6 +100,12 @@ def _text(d):
     return (d.get("title", "") + "\n" + (d.get("canonical_text") or d.get("content") or "")).strip()
 
 
+def embed_text(text, provider="local_hash", model="hash-v1"):
+    if provider != "local_hash" or model != "hash-v1":
+        raise ValueError("Only local_hash/hash-v1 is enabled; no API call is made.")
+    return vector(text)
+
+
 def index_documents(conn, docs, provider="local_hash", model="hash-v1"):
     ensure_schema(conn)
     if provider != "local_hash" or model != "hash-v1":
