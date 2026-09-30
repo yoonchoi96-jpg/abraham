@@ -162,10 +162,10 @@ def test_v7_persists_disagreement_signals():
     c = db()
     docs = [
         {"readwise_id": "1", "title": "Claim A", "canonical_text": "AI chips improve performance but no evidence"},
-        {"readwise_id": "2", "title": "Claim B", "canonical_text": "AI chips improve performance with evidence"},
+        {"readwise_id": "2", "title": "Claim B", "canonical_text": "AI chips improve efficiency with evidence"},
     ]
     index_documents(c, docs)
-    plan = build_plan(c, "AI chips performance", 2)
     result = run_research(c, "AI chips performance", 2)
     assert "confidence" in result["plan"]
-    assert c.execute("SELECT COUNT(*) FROM v7_claims").fetchone()[0] >= 0
+    assert result["plan"]["evidence_comparison"]["items"] >= 1
+    assert c.execute("SELECT COUNT(*) FROM v7_claims").fetchone()[0] >= 1
