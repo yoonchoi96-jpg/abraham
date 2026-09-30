@@ -55,7 +55,10 @@ def test_v6():
 
 def test_v8_watermark_and_change_detection():
     c = db()
-    d = [{"readwise_id": "1", "title": "AI", "canonical_text": "AI chips"}]
+    d = [
+        {"readwise_id": "1", "title": "AI", "canonical_text": "AI chips"},
+        {"readwise_id": "2", "title": "GPU", "canonical_text": "AI GPU chips"},
+    ]
     index_documents(c, d)
 
     c.execute(
