@@ -550,7 +550,7 @@ def _rate_batch(client, documents):
             "max_output_tokens": int(os.getenv("ABRAHAM_RATING_MAX_TOKENS", "16384")),
         },
     )
-    data=json.loads(response.text.strip().strip("`").replace("json\\n","",1))
+    data=json.loads(response.text.strip().strip("`").replace("json\n","",1))
     # DeepSeek may return either a bare JSON array or an object containing
     # a "ratings" array. Accept both response shapes.
     if isinstance(data,list):
