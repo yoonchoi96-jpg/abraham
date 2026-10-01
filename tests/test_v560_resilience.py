@@ -72,7 +72,7 @@ def test_rating_splits_failed_batch(monkeypatch):
 
 def test_single_document_failure_isolated(monkeypatch):
     def fake_translate(client, batch):
-        if len(batch) == 1 and batch[0]["document_id"] == "doc-3":
+        if any(d["document_id"] == "doc-3" for d in batch):
             return []
         return [
             {
