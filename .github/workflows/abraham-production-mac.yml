@@ -1,0 +1,129 @@
+name: Abraham V5.6.1 Production Mac
+
+"on":
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Maximum uncached documents for this run"
+        required: false
+        default: "10"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: abraham-production-mac
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    runs-on: [self-hosted, macOS, abraham-mac]
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run regression tests
+        run: |
+          python -m pip install pytest
+          python -m pytest -q tests
+
+      - name: Check local Obsidian REST API
+        env:
+          OBSIDIAN_API_URL: https://127.0.0.1:27124
+          OBSIDIAN_API_KEY: ${{ secrets.OBSIDIAN_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${OBSIDIAN_API_KEY}" || { echo "Missing OBSIDIAN_API_KEY"; exit 1; }
+          python - <<'PY'
+          import json, os, ssl, urllib.request
+          url = os.environ["OBSIDIAN_API_URL"].rstrip("/") + "/"
+          req = urllib.request.Request(
+              url,
+              headers={"Authorization": f"Bearer {os.environ['OBSIDIAN_API_KEY']}"},
+          )
+          with urllib.request.urlopen(
+              req, timeout=30, context=ssl._create_unverified_context()
+          ) as response:
+              payload = json.loads(response.read().decode())
+              assert response.status == 200
+              assert payload.get("service") == "Obsidian Local REST API"
+          print("Local Obsidian REST API reachable.")
+          PY
+
+      - name: Restore SQLite state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p data
+          gh release download state-current --pattern readwise_pipeline.db --dir data --clobber
+          test -s data/readwise_pipeline.db
+          python scripts/verify_state.py --db data/readwise_pipeline.db
+
+      - name: Sync Readwise Reader
+        env:
+          READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+        run: python scripts/sync_readwise.py --db data/readwise_pipeline.db --max-documents 1000 --lookback-minutes 10
+
+      - name: Run Abraham
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OBSIDIAN_API_URL: https://127.0.0.1:27124
+          OBSIDIAN_API_KEY: ${{ secrets.OBSIDIAN_API_KEY }}
+          MODEL: deepseek-flash
+          DEEPSEEK_THINKING: disabled
+          DEEPSEEK_MAX_TOKENS: "32768"
+          DEEPSEEK_MAX_RETRIES: "4"
+          ABRAHAM_TRANSLATION_THINKING: disabled
+          ABRAHAM_TRANSLATION_MAX_TOKENS: "32768"
+          ABRAHAM_RATING_THINKING: disabled
+          ABRAHAM_RATING_MAX_TOKENS: "16384"
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+          ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
+          ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
+          ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
+        run: |
+          limit="${{ inputs.limit }}"
+          if [ -n "${limit}" ]; then
+            python run_v560_storage.py --apply --limit "${limit}"
+          else
+            python run_v560_storage.py --apply
+          fi
+
+      - name: Run V6-V8 intelligence
+        env:
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+        run: python run_v6_v8.py --mode autonomous --limit 250
+
+      - name: Validate final SQLite state
+        run: python scripts/verify_state.py --db data/readwise_pipeline.db
+
+      - name: Refresh persistent state release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view state-current >/dev/null 2>&1; then
+            gh release upload state-current data/readwise_pipeline.db --clobber
+          else
+            gh release create state-current data/readwise_pipeline.db --title "Abraham SQLite State" --notes "Rolling persistent SQLite state for Abraham V5.6.1."
+          fi
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: abraham-v5.6.1-mac-${{ github.run_id }}
+          path: 90_Dashboard/auto_reports/
+          if-no-files-found: ignore
