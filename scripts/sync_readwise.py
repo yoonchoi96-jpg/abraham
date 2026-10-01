@@ -135,7 +135,7 @@ def normalize_content(item):
     return content.strip()
 
 
-def writable_values(item, columns, content, canonical_text=None):
+def writable_values(item, columns, content, canonical_text=None, status="new"):
     mapping = {
         "readwise_id": item.get("id"),
         "title": item.get("title") or "",
@@ -157,7 +157,7 @@ def writable_values(item, columns, content, canonical_text=None):
             ensure_ascii=False,
             sort_keys=True,
         ),
-        "status": "new",
+        "status": status,
         "path": "",
     }
     return {k: v for k, v in mapping.items() if k in columns and v is not None}
@@ -166,12 +166,18 @@ def writable_values(item, columns, content, canonical_text=None):
 def upsert(conn, item, columns, existing):
     rid = str(item["id"])
     content = normalize_content(item)
-    if not content:
-        raise RuntimeError(f"Readwise document has no readable content: {rid}")
-
     old = existing.get(rid)
-    if old is None:
-        values = writable_values(item, columns, content)
+
+    # Readwise can return metadata without readable body content. This must not
+    # abort the whole sync: retain metadata and recover content on a later refresh.
+    if not content and old is None:
+        values = writable_values(
+            item,
+            columns,
+            content="",
+            canonical_text="",
+            status="content_unavailable",
+        )
         required = {
             row[1]: row for row in conn.execute('PRAGMA table_info("documents")').fetchall()
         }
@@ -190,9 +196,12 @@ def upsert(conn, item, columns, existing):
             f'INSERT INTO documents ({",".join(names)}) VALUES ({placeholders})',
             tuple(values[n] for n in names),
         )
-        return "inserted"
+        return "unavailable"
 
     old_content = str(old.get("content") or "")
+    if not content:
+        content = old_content
+
     old_updated = parse_dt(old.get("updated_at"))
     new_updated = parse_dt(item.get("updated_at"))
     if new_updated and old_updated and new_updated <= old_updated and content == old_content:
@@ -202,6 +211,8 @@ def upsert(conn, item, columns, existing):
     # Preserve the V4.61 canonical text on existing rows. A future canonicalization
     # stage can replace it deliberately; ingestion must not silently destroy it.
     values.pop("canonical_text", None)
+    if not normalize_content(item):
+        values.pop("status", None)
 
     # Refresh Reader tags when supplied; never fabricate them.
     if "readwise_tags" in columns and item.get("tags") is not None:
@@ -240,7 +251,13 @@ def sync(db_path: Path, max_documents: int, lookback_minutes: int):
     )
 
     items = fetch_recent(token, updated_after, max_documents)
-    stats = {"fetched": len(items), "inserted": 0, "updated": 0, "unchanged": 0}
+    stats = {
+        "fetched": len(items),
+        "inserted": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "unavailable": 0,
+    }
 
     for item in items:
         if not item.get("id"):
@@ -256,6 +273,7 @@ def sync(db_path: Path, max_documents: int, lookback_minutes: int):
         "READWISE_SYNC_OK "
         f"fetched={stats['fetched']} inserted={stats['inserted']} "
         f"updated={stats['updated']} unchanged={stats['unchanged']} "
+        f"unavailable={stats['unavailable']} "
         f"documents={count} updated_after={updated_after.isoformat() if updated_after else 'none'}"
     )
 
