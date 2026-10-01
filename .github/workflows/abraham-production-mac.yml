@@ -1,6 +1,8 @@
 name: Abraham V5.6.1 Production Mac
 
 "on":
+  schedule:
+    - cron: "0 0,8,15 * * *"
   workflow_dispatch:
     inputs:
       limit:
@@ -94,11 +96,14 @@ jobs:
           ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
           ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
+          ABRAHAM_SCHEDULE_KST: "00:00,09:00,17:00"
         run: |
           limit="${{ inputs.limit }}"
           if [ -n "${limit}" ]; then
+            echo "Manual limit requested: ${limit}"
             python run_v560_storage.py --apply --limit "${limit}"
           else
+            echo "No workload limit: process the full pending/changed set until the runner time budget is exhausted."
             python run_v560_storage.py --apply
           fi
 
