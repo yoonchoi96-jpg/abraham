@@ -79,6 +79,14 @@ jobs:
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
         run: python scripts/sync_readwise.py --db data/readwise_pipeline.db --max-documents 1000 --lookback-minutes 10
 
+      - name: Persist synced SQLite state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -s data/readwise_pipeline.db
+          gh release upload state-current data/readwise_pipeline.db --clobber
+
       - name: Run Abraham
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
