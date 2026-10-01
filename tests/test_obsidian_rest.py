@@ -39,7 +39,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         self.__class__.calls.append(("PUT", self.path))
-        path = self.path.split("/vault/", 1)[-1]
+        path = urllib.parse.unquote(self.path.split("/vault/", 1)[-1])
         length = int(self.headers["Content-Length"])
         self.files[path] = self.rfile.read(length).decode()
         self.send_response(204)
@@ -47,7 +47,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         self.__class__.calls.append(("DELETE", self.path))
-        path = self.path.split("/vault/", 1)[-1]
+        path = urllib.parse.unquote(self.path.split("/vault/", 1)[-1])
         self.files.pop(path, None)
         self.send_response(204)
         self.end_headers()
