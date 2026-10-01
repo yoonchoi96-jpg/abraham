@@ -8,7 +8,7 @@ name: Abraham V5.6.1 Production Mac
       limit:
         description: "Maximum uncached documents for this run"
         required: false
-        default: "10"
+        default: "100"
 
 permissions:
   contents: write
@@ -97,15 +97,15 @@ jobs:
           ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
           ABRAHAM_SCHEDULE_KST: "00:00,09:00,17:00"
+          ABRAHAM_BATCH_LIMIT: "100"
+          PYTHONUNBUFFERED: "1"
         run: |
           limit="${{ inputs.limit }}"
-          if [ -n "${limit}" ]; then
-            echo "Manual limit requested: ${limit}"
-            python run_v560_storage.py --apply --limit "${limit}"
-          else
-            echo "No workload limit: process the full pending/changed set until the runner time budget is exhausted."
-            python run_v560_storage.py --apply
+          if [ -z "${limit}" ]; then
+            limit="${ABRAHAM_BATCH_LIMIT}"
           fi
+          echo "Workload limit: ${limit} documents"
+          python run_v560_storage.py --apply --limit "${limit}"
 
       - name: Run V6-V8 intelligence
         env:
