@@ -1,6 +1,9 @@
 name: Abraham V5.6.1 Production Mac
 
 "on":
+  push:
+    branches:
+      - main
   schedule:
     - cron: "0 0,8,15 * * *"
   workflow_dispatch:
