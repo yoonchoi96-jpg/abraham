@@ -588,6 +588,73 @@ def _persist_ratings(conn, documents, results):
         item["_total_score"]=total; item["_average"]=average; item["_tier"]=tier
     conn.commit()
 
+def _rate_batch_resilient(client, batch, stage_depth=0):
+    """Rate a batch, recursively splitting when the batch response fails."""
+    if not batch:
+        return [], []
+
+    try:
+        rated = _rate_batch(client, batch)
+        if stage_depth:
+            print(
+                f"[RATING SPLIT RECOVERED] {len(batch)} docs "
+                f"at depth {stage_depth}"
+            )
+        return rated, []
+    except Exception as exc:
+        if len(batch) <= 1:
+            print(
+                "[RATING SPLIT FAILED] single-document batch still failed; "
+                f"document_id={batch[0].get('document_id')}: {exc}"
+            )
+            return [], list(batch)
+
+        midpoint = max(1, len(batch) // 2)
+        left = batch[:midpoint]
+        right = batch[midpoint:]
+        print(
+            f"[RATING SPLIT] batch of {len(batch)} failed; "
+            f"retrying as {len(left)} + {len(right)}: {exc}"
+        )
+        left_results, left_failed = _rate_batch_resilient(
+            client, left, stage_depth + 1
+        )
+        right_results, right_failed = _rate_batch_resilient(
+            client, right, stage_depth + 1
+        )
+        return left_results + right_results, left_failed + right_failed
+
+
+def _persist_rating_batch(documents, rated):
+    """Persist rating table and stage state immediately after each success."""
+    if not rated:
+        return
+
+    by_id = {d["document_id"]: d for d in documents}
+    successful_documents = [
+        by_id[item["document_id"]]
+        for item in rated
+        if item.get("document_id") in by_id
+    ]
+    if not successful_documents:
+        return
+
+    with connect_db() as conn:
+        ensure_schema(conn)
+        _persist_ratings(conn, successful_documents, rated)
+        mark_completed(
+            conn,
+            successful_documents,
+            "rating",
+            {item["document_id"]: item for item in rated},
+            result_fields=RATING_DIMENSIONS,
+        )
+    print(
+        f"[RATING SQLITE COMMIT] {len(successful_documents)} docs "
+        "persisted immediately"
+    )
+
+
 def rate_documents(documents,args):
     rateable=[d for d in documents if d.get("_rating_required")]
     if not rateable: return {},[],[]
@@ -598,16 +665,32 @@ def rate_documents(documents,args):
         if args.apply and pending: mark_started(conn,pending,"rating",worker_id="abraham-v5.6")
     if not pending: return {},pending,skipped
     if not args.apply: return {},pending,skipped
+
     client=get_deepseek_client(); results={}
-    try:
-        for start in range(0,len(pending),KOREAN_BATCH_SIZE):
-            for item in _rate_batch(client,pending[start:start+KOREAN_BATCH_SIZE]): results[item["document_id"]]=item
+    for start in range(0,len(pending),KOREAN_BATCH_SIZE):
+        batch=pending[start:start+KOREAN_BATCH_SIZE]
+        rated, failed = _rate_batch_resilient(client,batch)
+        if rated:
+            _persist_rating_batch(batch,rated)
+            for item in rated:
+                results[item["document_id"]]=item
+        if failed:
+            print(
+                f"[RATING FAILED] {len(failed)} document(s) remain pending "
+                "after recursive splitting."
+            )
+
+    if len(results) < len(pending):
+        failed_ids=set(d["document_id"] for d in pending) - set(results)
+        failed_docs=[d for d in pending if d["document_id"] in failed_ids]
+        error=RuntimeError(
+            "Rating incomplete; "
+            f"missing {len(failed_docs)} document(s)"
+        )
         with connect_db() as conn:
-            _persist_ratings(conn,pending,list(results.values()))
-            mark_completed(conn,pending,"rating",results,result_fields=RATING_DIMENSIONS)
-    except Exception as exc:
-        with connect_db() as conn: mark_failed(conn,pending,"rating",exc)
-        raise
+            mark_failed(conn,failed_docs,"rating",error)
+        raise error
+
     return results,pending,skipped
 
 def _load_korean_stage_cache(documents):
