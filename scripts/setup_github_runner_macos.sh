@@ -20,7 +20,7 @@ mkdir -p "$RUNNER_DIR"
 cd "$RUNNER_DIR"
 
 if [[ ! -f .runner ]]; then
-  RUNNER_VERSION="${RUNNER_VERSION:-2.329.0}"
+  RUNNER_VERSION="${RUNNER_VERSION:-2.337.0}"
   ARCH="$(uname -m)"
   case "$ARCH" in
     x86_64) PACKAGE_ARCH="x64" ;;
