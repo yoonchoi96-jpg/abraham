@@ -2,13 +2,13 @@ name: Abraham V5.6.1 Production Mac
 
 "on":
   schedule:
-    - cron: "0 0,8,15 * * *"
+    - cron: "0 0,12,15 * * *"
   workflow_dispatch:
     inputs:
       limit:
         description: "Maximum uncached documents for this run"
         required: false
-        default: "100"
+        default: "200"
 
 permissions:
   contents: write
@@ -96,6 +96,7 @@ jobs:
           DEEPSEEK_THINKING: disabled
           DEEPSEEK_MAX_TOKENS: "32768"
           DEEPSEEK_MAX_RETRIES: "4"
+          KOREAN_BATCH_SIZE: "30"
           ABRAHAM_TRANSLATION_THINKING: disabled
           ABRAHAM_TRANSLATION_MAX_TOKENS: "32768"
           ABRAHAM_RATING_THINKING: disabled
@@ -105,7 +106,7 @@ jobs:
           ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
           ABRAHAM_SCHEDULE_KST: "00:00,09:00,17:00"
-          ABRAHAM_BATCH_LIMIT: "100"
+          ABRAHAM_BATCH_LIMIT: "200"
           PYTHONUNBUFFERED: "1"
         run: |
           limit="${{ inputs.limit }}"
