@@ -655,6 +655,76 @@ def _load_korean_stage_cache(documents):
     return results
 
 
+def _translate_korean_resilient(client, batch, stage_depth=0):
+    """Translate a batch, recursively splitting only when the whole batch fails.
+
+    Large JSON responses can occasionally be malformed/truncated. A failed
+    batch is therefore split into smaller batches so already-valid documents
+    are not lost and the API is only called again for the failing subset.
+    """
+    if not batch:
+        return []
+
+    translated = translate_korean_batch(client, batch)
+    if translated:
+        if stage_depth:
+            print(
+                f"[KOREAN SPLIT RECOVERED] {len(batch)} docs "
+                f"at depth {stage_depth}"
+            )
+        return translated
+
+    if len(batch) <= 1:
+        print(
+            "[KOREAN SPLIT FAILED] single-document batch still failed; "
+            f"document_id={batch[0].get('document_id')}"
+        )
+        return []
+
+    midpoint = max(1, len(batch) // 2)
+    left = batch[:midpoint]
+    right = batch[midpoint:]
+    print(
+        f"[KOREAN SPLIT] batch of {len(batch)} failed; "
+        f"retrying as {len(left)} + {len(right)}"
+    )
+
+    return (
+        _translate_korean_resilient(client, left, stage_depth + 1)
+        + _translate_korean_resilient(client, right, stage_depth + 1)
+    )
+
+
+def _persist_korean_results(documents, translated):
+    """Persist a successfully translated batch immediately to SQLite."""
+    if not translated:
+        return
+
+    by_id = {d["document_id"]: d for d in documents}
+    successful_documents = [
+        by_id[item["document_id"]]
+        for item in translated
+        if item.get("document_id") in by_id
+    ]
+    if not successful_documents:
+        return
+
+    result_by_id = {item["document_id"]: item for item in translated}
+    with connect_db() as conn:
+        ensure_schema(conn)
+        mark_completed(
+            conn,
+            successful_documents,
+            "korean_translation",
+            result_by_id,
+            result_fields=("korean_title", "korean_text"),
+        )
+    print(
+        f"[KOREAN SQLITE COMMIT] {len(successful_documents)} docs "
+        "persisted immediately"
+    )
+
+
 def translate_documents_to_korean(
     documents,
     limit=None,
@@ -688,7 +758,9 @@ def translate_documents_to_korean(
     print("Korean batches     :", len(batches))
 
     for number, batch in enumerate(batches, 1):
-        translated = translate_korean_batch(client, batch)
+        translated = _translate_korean_resilient(client, batch)
+        _persist_korean_results(batch, translated)
+
         for item in translated:
             document = next(
                 d for d in batch
@@ -708,7 +780,10 @@ def translate_documents_to_korean(
                 "model": MODEL,
                 "cache_key": cache_key,
             }
-        print(f"[KOREAN {number}/{len(batches)}] batch complete ({len(translated)} docs)")
+        print(
+            f"[KOREAN {number}/{len(batches)}] "
+            f"batch complete ({len(translated)}/{len(batch)} docs)"
+        )
 
     return results
 
@@ -1680,7 +1755,9 @@ def run_pipeline(args):
                 )
                 mark_failed(stage_conn, failed_docs, korean_stage, error)
                 raise error
-            mark_completed(stage_conn, korean_pending, korean_stage, korean_results)
+            # Successful translation sub-batches are persisted immediately by
+            # translate_documents_to_korean(). Do not rewrite the whole pending
+            # set here; only genuinely missing documents are marked failed.
 
     # ------------------------------------------------------------
     # 3. Build complete knowledge indexes from SQLite.
