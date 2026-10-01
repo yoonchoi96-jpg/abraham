@@ -105,7 +105,7 @@ jobs:
           ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
           ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
-          ABRAHAM_SCHEDULE_KST: "00:00,09:00,17:00"
+          ABRAHAM_SCHEDULE_KST: "00:00,09:00,21:00"
           ABRAHAM_BATCH_LIMIT: "200"
           PYTHONUNBUFFERED: "1"
         run: |
