@@ -170,13 +170,13 @@ def upsert(conn, item, columns, existing):
 
     # Readwise can return metadata without readable body content. This must not
     # abort the whole sync: retain metadata and recover content on a later refresh.
-    if not content and old is None:
+    if old is None:
         values = writable_values(
             item,
             columns,
-            content="",
-            canonical_text="",
-            status="content_unavailable",
+            content=content,
+            canonical_text=content,
+            status="content_unavailable" if not content else "new",
         )
         required = {
             row[1]: row for row in conn.execute('PRAGMA table_info("documents")').fetchall()
@@ -196,7 +196,7 @@ def upsert(conn, item, columns, existing):
             f'INSERT INTO documents ({",".join(names)}) VALUES ({placeholders})',
             tuple(values[n] for n in names),
         )
-        return "unavailable"
+        return "unavailable" if not content else "inserted"
 
     old_content = str(old.get("content") or "")
     if not content:
