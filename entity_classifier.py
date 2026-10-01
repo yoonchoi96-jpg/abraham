@@ -32,7 +32,7 @@ def classify_entity_batch(client, entities):
     )
 
     response = client.models.generate_content(
-        model=os.getenv("GEMINI_RATING_MODEL", "gemini-3.6-flash"),
+        model=os.getenv("DEEPSEEK_ENTITY_CLASSIFICATION_MODEL", os.getenv("MODEL", "deepseek-flash")),
         contents=prompt,
         config={
             "response_mime_type": "application/json",
