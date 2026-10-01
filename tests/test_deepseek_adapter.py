@@ -15,3 +15,15 @@ def test_deepseek_adapter_has_thinking_controls():
     assert 'DEEPSEEK_THINKING' in source
     assert 'DEEPSEEK_REASONING_EFFORT' in source
     assert 'reasoning_effort' in source
+
+
+def test_v56_pipeline_has_no_direct_gemini_dependency():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    pipeline = (root / "run_v560_storage.py").read_text(encoding="utf-8")
+    classifier = (root / "entity_classifier.py").read_text(encoding="utf-8")
+
+    assert "get_gemini_client" not in pipeline
+    assert "get_gemini_client" not in classifier
+    assert "get_deepseek_client" in pipeline
