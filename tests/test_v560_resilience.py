@@ -93,7 +93,5 @@ def test_single_document_failure_isolated(monkeypatch):
     result = _translate_korean_resilient(object(), docs)
 
     assert {x["document_id"] for x in result} == {
-        "doc-0", "doc-1", "doc-2", "doc-3"
-    } or {x["document_id"] for x in result} == {
         "doc-0", "doc-1", "doc-2"
     }
