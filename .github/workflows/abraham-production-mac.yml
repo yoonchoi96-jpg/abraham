@@ -2,13 +2,13 @@ name: Abraham V5.6.1 Production Mac
 
 "on":
   schedule:
-    - cron: "0 0,12,15 * * *"
+    - cron: "0 0,3,6,9,12,15,18,21 * * *"
   workflow_dispatch:
     inputs:
       limit:
         description: "Maximum uncached documents for this run"
         required: false
-        default: "200"
+        default: ""
 
 permissions:
   contents: write
@@ -96,7 +96,9 @@ jobs:
           DEEPSEEK_THINKING: disabled
           DEEPSEEK_MAX_TOKENS: "32768"
           DEEPSEEK_MAX_RETRIES: "4"
-          KOREAN_BATCH_SIZE: "20"
+          KOREAN_BATCH_SIZE: "40"
+          ABRAHAM_PARALLEL_AI: "1"
+          ABRAHAM_AI_MAX_WORKERS: "2"
           ABRAHAM_TRANSLATION_THINKING: disabled
           ABRAHAM_TRANSLATION_MAX_TOKENS: "32768"
           ABRAHAM_RATING_THINKING: disabled
@@ -105,16 +107,21 @@ jobs:
           ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
           ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
-          ABRAHAM_SCHEDULE_KST: "00:00,09:00,21:00"
-          ABRAHAM_BATCH_LIMIT: "200"
+          ABRAHAM_SCHEDULE_KST: "00:00,03:00,06:00,09:00,12:00,15:00,18:00,21:00"
+          ABRAHAM_BATCH_LIMIT: ""
           PYTHONUNBUFFERED: "1"
         run: |
           limit="${{ inputs.limit }}"
           if [ -z "${limit}" ]; then
             limit="${ABRAHAM_BATCH_LIMIT}"
           fi
-          echo "Workload limit: ${limit} documents"
-          python run_v560_storage.py --apply --limit "${limit}"
+          if [ -n "${limit}" ]; then
+            echo "Workload limit: ${limit} documents"
+            python run_v560_storage.py --apply --limit "${limit}"
+          else
+            echo "Workload limit: UNBOUNDED DRAIN MODE"
+            python run_v560_storage.py --apply
+          fi
 
       - name: Run V6-V8 intelligence
         env:
