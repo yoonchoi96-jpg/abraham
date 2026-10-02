@@ -12,7 +12,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -53,7 +53,8 @@ REPORT_DIR = Path(os.getenv(
     "ABRAHAM_REPORT_DIR",
     str(VAULT_PATH / "90_Dashboard" / "auto_reports"),
 )).expanduser()
-KOREAN_BATCH_SIZE = int(os.getenv("KOREAN_BATCH_SIZE", "40"))
+KOREAN_BATCH_SIZE = int(os.getenv("KOREAN_BATCH_SIZE", "60"))
+KOREAN_WORKERS = max(1, int(os.getenv("ABRAHAM_TRANSLATION_WORKERS", "3")))
 KOREAN_MAX_RETRIES = int(os.getenv("KOREAN_MAX_RETRIES", "3"))
 ABRAHAM_SCHEDULE_KST = os.getenv(
     "ABRAHAM_SCHEDULE_KST",
@@ -850,40 +851,55 @@ def translate_documents_to_korean(
             print("Korean AI skipped (dry-run)")
         return results
 
-    client = get_korean_client()
     batches = [
         pending[i:i + KOREAN_BATCH_SIZE]
         for i in range(0, len(pending), KOREAN_BATCH_SIZE)
     ]
     print("Korean batches     :", len(batches))
+    print("Korean workers     :", KOREAN_WORKERS)
 
-    for number, batch in enumerate(batches, 1):
+    def process_batch(number, batch):
+        # One client per worker avoids sharing mutable client state across threads.
+        client = get_korean_client()
         translated = _translate_korean_resilient(client, batch)
         _persist_korean_results(batch, translated)
+        return number, batch, translated
 
-        for item in translated:
-            document = next(
-                d for d in batch
-                if d["document_id"] == item["document_id"]
+    # Translation batches are independent and persist atomically per batch.
+    # Parallelism is configurable so production can be tuned without code edits.
+    with ThreadPoolExecutor(
+        max_workers=KOREAN_WORKERS,
+        thread_name_prefix="abraham-korean",
+    ) as pool:
+        futures = [
+            pool.submit(process_batch, number, batch)
+            for number, batch in enumerate(batches, 1)
+        ]
+        for future in as_completed(futures):
+            number, batch, translated = future.result()
+            for item in translated:
+                document = next(
+                    d for d in batch
+                    if d["document_id"] == item["document_id"]
+                )
+                rid = str(document["readwise_id"]).strip()
+                canonical = document.get("canonical_text") or document.get("content") or ""
+                cache_key = stable_text_hash(rid, canonical, PROMPT_VERSION, MODEL)
+                results[item["document_id"]] = {
+                    "document_id": item["document_id"],
+                    "readwise_id": rid,
+                    "canonical_text": canonical,
+                    "korean_title": item["korean_title"],
+                    "korean_text": item["korean_text"],
+                    "translation_notes": item.get("translation_notes", []),
+                    "prompt_version": PROMPT_VERSION,
+                    "model": MODEL,
+                    "cache_key": cache_key,
+                }
+            print(
+                f"[KOREAN {number}/{len(batches)}] "
+                f"batch complete ({len(translated)}/{len(batch)} docs)"
             )
-            rid = str(document["readwise_id"]).strip()
-            canonical = document.get("canonical_text") or document.get("content") or ""
-            cache_key = stable_text_hash(rid, canonical, PROMPT_VERSION, MODEL)
-            results[item["document_id"]] = {
-                "document_id": item["document_id"],
-                "readwise_id": rid,
-                "canonical_text": canonical,
-                "korean_title": item["korean_title"],
-                "korean_text": item["korean_text"],
-                "translation_notes": item.get("translation_notes", []),
-                "prompt_version": PROMPT_VERSION,
-                "model": MODEL,
-                "cache_key": cache_key,
-            }
-        print(
-            f"[KOREAN {number}/{len(batches)}] "
-            f"batch complete ({len(translated)}/{len(batch)} docs)"
-        )
 
     return results
 
