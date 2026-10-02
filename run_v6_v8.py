@@ -12,16 +12,39 @@ def _columns(conn, table):
     return {str(r["name"]) for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
 
 def _iter_semantic_documents(conn,batch_size=1000):
+    # Use Readwise updated_at as a cheap first-pass filter. index_documents()
+    # still performs the authoritative content-hash check.
     cols=_columns(conn,"documents")
     order=[x for x in ("updated_at","last_processed_at","first_seen_at") if x in cols]
     order_sql="COALESCE("+",".join(order+["rowid"])+") DESC" if order else "rowid DESC"
+
+    if "updated_at" in cols:
+        sql=f"""
+            SELECT d.readwise_id,d.title,d.content,d.canonical_text
+            FROM documents d
+            LEFT JOIN v6_vectors v ON v.readwise_id=d.readwise_id
+            WHERE v.readwise_id IS NULL
+               OR v.updated_at IS NULL
+               OR d.updated_at > v.updated_at
+            ORDER BY {order_sql}
+            LIMIT ? OFFSET ?
+        """
+    else:
+        sql=f"""
+            SELECT d.readwise_id,d.title,d.content,d.canonical_text
+            FROM documents d
+            LEFT JOIN v6_vectors v ON v.readwise_id=d.readwise_id
+            WHERE v.readwise_id IS NULL
+            ORDER BY {order_sql}
+            LIMIT ? OFFSET ?
+        """
+
     offset=0
     while True:
-        rows=conn.execute(f"SELECT readwise_id,title,content,canonical_text FROM documents ORDER BY {order_sql} LIMIT ? OFFSET ?",(batch_size,offset)).fetchall()
+        rows=conn.execute(sql,(batch_size,offset)).fetchall()
         if not rows: return
         yield [dict(r) for r in rows]
         offset += len(rows)
-
 def _latest_stage_documents(conn,limit):
     rows=conn.execute("""SELECT DISTINCT readwise_id FROM document_stages WHERE status='completed' ORDER BY updated_at DESC LIMIT ?""",(max(1,min(int(limit),250)),)).fetchall()
     ids=[str(r["readwise_id"]) for r in rows]
