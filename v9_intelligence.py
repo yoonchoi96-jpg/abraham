@@ -51,7 +51,7 @@ def _documents(c,limit=1000):
 def fingerprint(c,d):
     rid=str(d.get("readwise_id") or "").strip()
     h=digest(text(d))
-    old=c.execute("SELECT readwise_id FROM v9_fingerprints WHERE fingerprint=? AND readwise_id<>? LIMIT 1",(h,rid)).fetchone()
+    old=c.execute("SELECT readwise_id FROM v9_fingerprints WHERE fingerprint=? AND readwise_id<>? ORDER BY updated_at LIMIT 1",(h,rid)).fetchone()
     dup=str(old[0]) if old else None
     c.execute("""INSERT INTO v9_fingerprints VALUES(?,?,?,?,?)
                  ON CONFLICT(readwise_id) DO UPDATE SET fingerprint=excluded.fingerprint,content_hash=excluded.content_hash,duplicate_of=excluded.duplicate_of,updated_at=excluded.updated_at""",(rid,h,h,dup,now()))
@@ -79,8 +79,10 @@ def question_generation(c,d):
     for term in terms[:3]:
         q=f"이 자료에서 {term}은 기존 지식과 어떻게 연결되거나 달라지는가?"
         qid=digest("question",rid,term)[:32]
-        c.execute("INSERT OR IGNORE INTO v9_questions VALUES(?,?,?,?,?,?,?)",(qid,q,rid,"open","[]",now(),now()))
-        qs.append(q)
+        exists=c.execute("SELECT 1 FROM v9_questions WHERE question_id=? LIMIT 1",(qid,)).fetchone()
+        if not exists:
+            c.execute("INSERT INTO v9_questions VALUES(?,?,?,?,?,?,?)",(qid,q,rid,"open","[]",now(),now()))
+            qs.append(q)
     return qs
 
 def contradiction_candidates(c,docs):
