@@ -1690,7 +1690,7 @@ def apply_files_via_obsidian_rest(
         for key, value in candidates.items():
             if not value:
                 continue
-            pattern = rf"(?m)^{re.escape(key)}:\\s*[\\\"']?{re.escape(value)}[\\\"']?\\s*$"
+            pattern = rf"""(?m)^{re.escape(key)}:\s*["']?{re.escape(value)}["']?\s*$"""
             if re.search(pattern, existing_content):
                 return True
         return False
