@@ -98,7 +98,8 @@ jobs:
           DEEPSEEK_THINKING: disabled
           DEEPSEEK_MAX_TOKENS: "32768"
           DEEPSEEK_MAX_RETRIES: "4"
-          KOREAN_BATCH_SIZE: "40"
+          KOREAN_BATCH_SIZE: "60"
+          ABRAHAM_TRANSLATION_WORKERS: "3"
           ABRAHAM_PARALLEL_AI: "1"
           ABRAHAM_AI_MAX_WORKERS: "2"
           ABRAHAM_TRANSLATION_THINKING: disabled
