@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -52,7 +53,7 @@ REPORT_DIR = Path(os.getenv(
     "ABRAHAM_REPORT_DIR",
     str(VAULT_PATH / "90_Dashboard" / "auto_reports"),
 )).expanduser()
-KOREAN_BATCH_SIZE = int(os.getenv("KOREAN_BATCH_SIZE", "20"))
+KOREAN_BATCH_SIZE = int(os.getenv("KOREAN_BATCH_SIZE", "40"))
 KOREAN_MAX_RETRIES = int(os.getenv("KOREAN_MAX_RETRIES", "3"))
 ABRAHAM_SCHEDULE_KST = os.getenv(
     "ABRAHAM_SCHEDULE_KST",
@@ -1771,16 +1772,10 @@ def run_pipeline(args):
     documents = gated_documents
 
     # ------------------------------------------------------------
-    # 1. Rating stage: only Blue/Navy/Purple/Gold documents.
-    # Existing ratings are adopted without another AI call.
-    # ------------------------------------------------------------
-    rating_results, rating_pending, rating_skipped = rate_documents(documents, args)
-    print("Rating required       :", sum(1 for d in documents if d.get("_rating_required")))
-    print("Rating AI pending     :", len(rating_pending))
-    print("Rating skipped        :", len(rating_skipped))
-
-    # ------------------------------------------------------------
-    # 2. Korean stage: only new/changed source content goes to AI.
+    # 1-2. Independent AI stages.
+    # Rating and Korean translation have no dependency on each other,
+    # so production can run them concurrently. Each worker owns its
+    # own model client and SQLite connection; persistence remains per batch.
     # ------------------------------------------------------------
     korean_stage = "korean_translation"
     with connect_db() as stage_conn:
@@ -1791,7 +1786,6 @@ def run_pipeline(args):
             korean_stage,
             force_ids=args.readwise_id,
         )
-
         if args.limit is not None:
             korean_pending = korean_pending[:args.limit]
 
@@ -1805,43 +1799,73 @@ def run_pipeline(args):
         print()
 
         if args.apply and korean_pending:
-            mark_started(stage_conn, korean_pending, korean_stage, worker_id="abraham-v5.6")
-
-        try:
-            korean_results = translate_documents_to_korean(
+            mark_started(
+                stage_conn,
                 korean_pending,
-                limit=None,
-                allow_ai=args.apply,
+                korean_stage,
+                worker_id="abraham-v5.6-korean",
             )
-        except Exception as exc:
-            if args.apply and korean_pending:
-                mark_failed(stage_conn, korean_pending, korean_stage, exc)
-            raise
 
-        # Existing cached translations are needed for render-stage evaluation.
-        # Fetch them by running the cache resolver over the full snapshot; this
-        # does not invoke Gemini for unchanged documents.
-        all_korean_results = translate_documents_to_korean(
-            documents,
-            limit=0,
-            allow_ai=False,
+    parallel_ai = (
+        args.apply
+        and os.getenv("ABRAHAM_PARALLEL_AI", "1") == "1"
+        and args.readwise_id is None
+    )
+    if parallel_ai:
+        workers = max(2, int(os.getenv("ABRAHAM_AI_MAX_WORKERS", "2")))
+        print(f"[AI PARALLEL] enabled workers={workers} rating+translation")
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="abraham-ai") as pool:
+            rating_future = pool.submit(rate_documents, documents, args)
+            korean_future = pool.submit(
+                translate_documents_to_korean,
+                korean_pending,
+                None,
+                True,
+            )
+            rating_results, rating_pending, rating_skipped = rating_future.result()
+            korean_results = korean_future.result()
+    else:
+        rating_results, rating_pending, rating_skipped = rate_documents(documents, args)
+        korean_results = translate_documents_to_korean(
+            korean_pending,
+            limit=None,
+            allow_ai=args.apply,
         )
-        all_korean_results.update(korean_results)
-        if args.apply and korean_pending:
-            translated_ids = set(korean_results)
-            pending_ids = {d["document_id"] for d in korean_pending}
-            missing_ids = pending_ids - translated_ids
-            if missing_ids:
-                failed_docs = [d for d in korean_pending if d["document_id"] in missing_ids]
-                error = RuntimeError(
-                    "Korean translation incomplete; "
-                    f"missing {len(missing_ids)} document(s)"
+
+    print("Rating required       :", sum(1 for d in documents if d.get("_rating_required")))
+    print("Rating AI pending     :", len(rating_pending))
+    print("Rating skipped        :", len(rating_skipped))
+
+    # Existing cached translations are needed for render-stage evaluation.
+    # This is a SQLite-only cache read and never invokes the AI.
+    all_korean_results = translate_documents_to_korean(
+        documents,
+        limit=0,
+        allow_ai=False,
+    )
+    all_korean_results.update(korean_results)
+
+    if args.apply and korean_pending:
+        translated_ids = set(korean_results)
+        pending_ids = {d["document_id"] for d in korean_pending}
+        missing_ids = pending_ids - translated_ids
+        if missing_ids:
+            failed_docs = [
+                d for d in korean_pending
+                if d["document_id"] in missing_ids
+            ]
+            error = RuntimeError(
+                "Korean translation incomplete; "
+                f"missing {len(missing_ids)} document(s)"
+            )
+            with connect_db() as stage_conn:
+                mark_failed(
+                    stage_conn,
+                    failed_docs,
+                    korean_stage,
+                    error,
                 )
-                mark_failed(stage_conn, failed_docs, korean_stage, error)
-                raise error
-            # Successful translation sub-batches are persisted immediately by
-            # translate_documents_to_korean(). Do not rewrite the whole pending
-            # set here; only genuinely missing documents are marked failed.
+            raise error
 
     # ------------------------------------------------------------
     # 3. Build complete knowledge indexes from SQLite.
