@@ -1843,7 +1843,7 @@ def run_pipeline(args):
         and args.readwise_id is None
     )
     if parallel_ai:
-        workers = max(2, int(os.getenv("ABRAHAM_AI_MAX_WORKERS", "2")))
+        workers = max(2, int(os.getenv("ABRAHAM_AI_MAX_WORKERS", "4")))
         print(f"[AI PARALLEL] enabled workers={workers} rating+translation")
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="abraham-ai") as pool:
             rating_future = pool.submit(rate_documents, documents, args)
