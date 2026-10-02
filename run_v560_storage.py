@@ -32,10 +32,11 @@ from abraham_incremental import (
 
 from dotenv import load_dotenv
 from abraham_storage import storage_status, run_storage_maintenance
+from adaptive_batch import plan_adaptive_batches, batch_stats
 
 
 VERSION = "5.6.1"
-PROMPT_VERSION = "5.6.1-korean-presentation-sqlite"
+PROMPT_VERSION = "5.6.2-korean-adaptive"
 
 load_dotenv()
 
@@ -917,12 +918,26 @@ def translate_documents_to_korean(
             print("Korean AI skipped (dry-run)")
         return results
 
-    batches = [
-        pending[i:i + KOREAN_BATCH_SIZE]
-        for i in range(0, len(pending), KOREAN_BATCH_SIZE)
-    ]
+    adaptive_target = int(os.getenv("ABRAHAM_KOREAN_TARGET_CHARS", "36000"))
+    adaptive_min = int(os.getenv("ABRAHAM_KOREAN_MIN_BATCH", "4"))
+    adaptive_max = int(os.getenv("ABRAHAM_KOREAN_MAX_BATCH", str(KOREAN_BATCH_SIZE)))
+    batches = plan_adaptive_batches(
+        pending,
+        target_chars=adaptive_target,
+        min_batch=adaptive_min,
+        max_batch=adaptive_max,
+    )
     print("Korean batches     :", len(batches))
     print("Korean workers     :", KOREAN_WORKERS)
+    print("Korean target chars:", adaptive_target)
+    for idx, planned_batch in enumerate(batches, 1):
+        stats = batch_stats(planned_batch)
+        print(
+            f"[KOREAN PLAN {idx}/{len(batches)}] "
+            f"{stats['documents']} docs, "
+            f"estimated chars={stats['estimated_input_chars']}, "
+            f"max-doc={stats['max_document_chars']}"
+        )
 
     def process_batch(number, batch):
         # One client per worker avoids sharing mutable client state across threads.
