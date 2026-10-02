@@ -958,11 +958,15 @@ def translate_documents_to_korean(
         ]
         for future in as_completed(futures):
             number, batch, translated = future.result()
+            by_document_id = {d["document_id"]: d for d in batch}
             for item in translated:
-                document = next(
-                    d for d in batch
-                    if d["document_id"] == item["document_id"]
-                )
+                document = by_document_id.get(item["document_id"])
+                if not document:
+                    print(
+                        f"[KOREAN WARN] translated document_id not in batch: "
+                        f"{item.get('document_id')}"
+                    )
+                    continue
                 rid = str(document["readwise_id"]).strip()
                 canonical = document.get("canonical_text") or document.get("content") or ""
                 cache_key = stable_text_hash(rid, canonical, PROMPT_VERSION, MODEL)
