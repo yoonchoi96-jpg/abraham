@@ -757,27 +757,43 @@ def _load_korean_stage_cache(documents):
 
 
 def _translate_korean_resilient(client, batch, stage_depth=0):
-    """Translate a batch, recursively splitting only when the whole batch fails.
+    """Translate a batch and retry only documents missing from a partial response.
 
-    Large JSON responses can occasionally be malformed/truncated. A failed
-    batch is therefore split into smaller batches so already-valid documents
-    are not lost and the API is only called again for the failing subset.
+    A large JSON response may be truncated after several complete document
+    objects. Those valid objects are kept immediately; only missing documents
+    are sent back to the model. Recursive half-splitting is the last-resort
+    fallback for responses that contain no salvageable documents.
     """
     if not batch:
         return []
 
     translated = translate_korean_batch(client, batch)
     if translated:
+        translated_ids = {item.get("document_id") for item in translated}
+        missing = [
+            d for d in batch
+            if d.get("document_id") not in translated_ids
+        ]
+        if missing:
+            print(
+                f"[KOREAN PARTIAL] recovered {len(translated)}/{len(batch)} docs; "
+                f"retrying only {len(missing)} missing docs"
+            )
+            recovered = _translate_korean_resilient(
+                client, missing, stage_depth + 1
+            )
+            translated = translated + recovered
+
         if stage_depth:
             print(
-                f"[KOREAN SPLIT RECOVERED] {len(batch)} docs "
+                f"[KOREAN RECOVERED] {len(translated)}/{len(batch)} docs "
                 f"at depth {stage_depth}"
             )
         return translated
 
     if len(batch) <= 1:
         print(
-            "[KOREAN SPLIT FAILED] single-document batch still failed; "
+            "[KOREAN FAILED] single-document batch still failed; "
             f"document_id={batch[0].get('document_id')}"
         )
         return []
@@ -786,7 +802,7 @@ def _translate_korean_resilient(client, batch, stage_depth=0):
     left = batch[:midpoint]
     right = batch[midpoint:]
     print(
-        f"[KOREAN SPLIT] batch of {len(batch)} failed; "
+        f"[KOREAN SPLIT] no salvageable output from {len(batch)} docs; "
         f"retrying as {len(left)} + {len(right)}"
     )
 
