@@ -2032,7 +2032,13 @@ def run_pipeline(args):
     document_candidates = []
     for document in documents:
         did = document["document_id"]
-        korean = all_korean_results.get(did, {})
+        if did not in all_korean_results:
+            print(
+                f"[RENDER SKIP] Korean translation incomplete; "
+                f"document_id={did} will be retried on the next run."
+            )
+            continue
+        korean = all_korean_results[did]
         document_id_links = [x for x in document_entity_links if x["document_id"] == did]
         document_relation_links = [x for x in entity_relation_links if x.get("document_id") == did]
         render_hash = stable_text_hash(
