@@ -22,6 +22,7 @@ from entity_classifier import classify_entity_batch
 from abraham_sqlite import load_documents, load_documents_by_ids, connect as connect_db
 from abraham_incremental import (
     ensure_schema,
+    content_hash,
     select_pending_documents,
     mark_started,
     mark_completed,
