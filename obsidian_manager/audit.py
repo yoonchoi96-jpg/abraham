@@ -8,10 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
-PROTECTED_KEYS = {
-    "entity", "entities", "rating", "source", "source_url", "source_id",
-    "readwise_id", "classification", "category", "relations", "relation",
-}
+from .governance import audit_field_ownership
 
 WIKILINK_RE = re.compile(r"\[\[([^|\]#]+)(?:#[^|\]]+)?(?:\|[^\]]+)?\]\]")
 MD_LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
@@ -34,7 +31,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str | None]:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return {}, None
-    end = next((i for i in range(1, len(lines)) if lines[i].strip() in {"---", "..."}), None)
+    end = next((i for i in range(1, len(lines)) if lines[i].strip() in {"---", "..." }), None)
     if end is None:
         return {}, "frontmatter_unclosed"
     data: dict[str, str] = {}
@@ -77,7 +74,7 @@ def audit(root: Path) -> dict:
     files = list(iter_markdown(root))
     issues: list[Issue] = []
     stems: defaultdict[str, list[str]] = defaultdict(list)
-    protected_usage: Counter[str] = Counter()
+    ownership: Counter[str] = Counter()
     folders: Counter[str] = Counter()
 
     for path in files:
@@ -94,10 +91,16 @@ def audit(root: Path) -> dict:
         if fm_error:
             issues.append(Issue("frontmatter_error", rel, fm_error))
 
-        for key in frontmatter:
-            normalized = key.strip().lower()
-            if normalized in PROTECTED_KEYS:
-                protected_usage[normalized] += 1
+        file_ownership = audit_field_ownership(frontmatter)
+        for owner, keys in file_ownership.items():
+            ownership[owner] += len(keys)
+
+        for key in file_ownership["unknown"]:
+            issues.append(Issue(
+                "unknown_metadata_owner",
+                rel,
+                f"Metadata key {key!r} has no declared owner.",
+            ))
 
         for match in WIKILINK_RE.finditer(content):
             target = match.group(1).strip()
@@ -115,7 +118,8 @@ def audit(root: Path) -> dict:
                 issues.append(Issue("duplicate_stem", path, f"Stem {stem!r} appears {len(paths)} times."))
 
     return {
-        "manager_version": "0.1.0",
+        "manager_name": "Hendrix",
+        "manager_version": "0.2.0",
         "mode": "read_only",
         "vault": str(root),
         "summary": {
@@ -124,13 +128,19 @@ def audit(root: Path) -> dict:
             "issue_types": dict(Counter(i.kind for i in issues)),
             "folders": len(folders),
         },
-        "protected_metadata_observed": dict(protected_usage),
+        "metadata_ownership": dict(sorted(ownership.items())),
         "issues": [asdict(i) for i in issues],
         "folder_counts": dict(sorted(folders.items())),
+        "safety_contract": {
+            "abraham_metadata_writable_by_hendrix": False,
+            "abel_metadata_writable_by_hendrix": False,
+            "unknown_metadata_writable_by_hendrix": False,
+            "destructive_operations_enabled": False,
+        },
     }
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Read-only Obsidian Vault audit.")
+    parser = argparse.ArgumentParser(description="Read-only Hendrix Obsidian Vault audit.")
     parser.add_argument("vault", type=Path)
     parser.add_argument("--json", dest="json_path", type=Path)
     parser.add_argument("--fail-on-issues", action="store_true")
