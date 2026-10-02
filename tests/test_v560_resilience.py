@@ -95,3 +95,58 @@ def test_single_document_failure_isolated(monkeypatch):
     assert {x["document_id"] for x in result} == {
         "doc-0", "doc-1", "doc-2"
     }
+
+
+def test_korean_partial_response_retries_only_missing_documents(monkeypatch):
+    calls = []
+
+    def fake_translate(client, batch):
+        calls.append([d["document_id"] for d in batch])
+        if len(calls) == 1:
+            return [
+                {
+                    "document_id": d["document_id"],
+                    "korean_title": "제목",
+                    "korean_text": "본문",
+                    "translation_notes": [],
+                }
+                for d in batch[:6]
+            ]
+        return [
+            {
+                "document_id": d["document_id"],
+                "korean_title": "제목",
+                "korean_text": "본문",
+                "translation_notes": [],
+            }
+            for d in batch
+        ]
+
+    monkeypatch.setattr(
+        "run_v560_storage.translate_korean_batch",
+        fake_translate,
+    )
+
+    docs = _documents(8)
+    result = _translate_korean_resilient(object(), docs)
+
+    assert {x["document_id"] for x in result} == {
+        d["document_id"] for d in docs
+    }
+    assert calls == [
+        [f"doc-{i}" for i in range(8)],
+        ["doc-6", "doc-7"],
+    ]
+
+
+def test_salvage_truncated_korean_json():
+    from run_v560_storage import _salvage_korean_documents
+
+    raw = '{"documents":['
+    raw += '{"index":0,"korean_title":"A","korean_text":"첫째","translation_notes":[]},'
+    raw += '{"index":1,"korean_title":"B","korean_text":"둘째","translation_notes":[]},'
+    raw += '{"index":2,"korean_title":"C","korean_text":"셋'
+
+    result = _salvage_korean_documents(raw)
+
+    assert [x["index"] for x in result] == [0, 1]
