@@ -189,7 +189,7 @@ def process(c,limit=250,run_id=None):
         b={"terms":list(reversed(ts[-20:])),"length":len(ts)}
         dis=sorted(set(a["terms"])^set(b["terms"]))
         did=digest("duel",d["readwise_id"])[:32]
-        c.execute("INSERT OR REPLACE INTO v9_duel VALUES(?,?,?,?,?)",(did,d["readwise_id"],js(a),js(b),js(dis),now()))
+        c.execute("INSERT OR REPLACE INTO v9_duel VALUES(?,?,?,?,?,?)",(did,d["readwise_id"],js(a),js(b),js(dis),now()))
     stats["duels"]=min(100,len(docs))
     rid=run_id or digest("v9run",now())[:24]; telemetry(c,rid,stats)
     c.commit()
