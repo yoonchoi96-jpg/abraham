@@ -157,6 +157,11 @@ jobs:
             gh release create state-current data/readwise_pipeline.db --title "Abraham SQLite State" --notes "Rolling persistent SQLite state for Abraham V5.6.1."
           fi
 
+      - name: Fail if Abraham failed after state persistence
+        if: always() && steps.abraham.outcome == 'failure'
+        run: |
+          echo "Abraham failed, but partial SQLite state was persisted safely."
+          exit 1
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
