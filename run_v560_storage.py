@@ -721,7 +721,7 @@ def _load_korean_stage_cache(documents):
         document = by_rid.get(rid)
         if not document or not row["result_json"]:
             continue
-        expected_hash = content_hash(
+        expected_hash = stable_text_hash(
             document.get("content", ""),
             document.get("canonical_text", ""),
         )
