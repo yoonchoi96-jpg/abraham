@@ -1980,7 +1980,24 @@ def run_pipeline(args):
                     korean_stage,
                     error,
                 )
-            raise error
+            print(
+                "[KOREAN PARTIAL RUN] "
+                f"{len(missing_ids)} document(s) failed translation; "
+                "keeping them pending for the next run."
+            )
+
+            # Do not abort the entire pipeline because a small number of
+            # documents produced malformed model output. Successful
+            # translations continue through entity/render/V6-V9 stages.
+            all_korean_results = translate_documents_to_korean(
+                documents,
+                limit=0,
+                allow_ai=False,
+            )
+            all_korean_results.update(korean_results)
+
+    # Render only documents with a completed Korean translation. Failed
+    # translation items remain in SQLite as failed and are retried later.
 
     # ------------------------------------------------------------
     # 3. Build complete knowledge indexes from SQLite.
