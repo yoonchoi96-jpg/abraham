@@ -7,6 +7,7 @@ from abraham_incremental import ensure_schema
 from v6_semantic import index_documents,search
 from v7_research import ensure_schema as v7_schema
 from v8_autonomous import ensure_schema as v8_schema,detect
+from v9_intelligence import ensure_schema as v9_schema, process as v9_process, status as v9_status
 
 def _columns(conn, table):
     return {str(r["name"]) for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
@@ -61,7 +62,7 @@ def _index_all(conn):
 
 def main():
     p=argparse.ArgumentParser(); p.add_argument("--mode",choices=("index","search","research","autonomous","status"),default="autonomous"); p.add_argument("--query"); p.add_argument("--limit",type=int,default=250); p.add_argument("--question"); a=p.parse_args()
-    c=connect(); ensure_schema(c); v7_schema(c); v8_schema(c)
+    c=connect(); ensure_schema(c); v7_schema(c); v8_schema(c); v9_schema(c)
     if a.mode=="index": out={"v6":_index_all(c)}
     elif a.mode=="search":
         if not a.query: raise SystemExit("--query required")
@@ -71,8 +72,8 @@ def main():
         from v7_research import run_research
         out={"v7":run_research(c,a.question,a.limit)}
     elif a.mode=="autonomous":
-        out={"v6":_index_all(c),"v8":detect(c,_latest_stage_documents(c,a.limit),a.limit)}
+        out={"v6":_index_all(c),"v8":detect(c,_latest_stage_documents(c,a.limit),a.limit),"v9":v9_process(c,a.limit)}
     else:
-        out={t:c.execute("SELECT COUNT(*) FROM "+t).fetchone()[0] for t in ("v6_vectors","v7_research_runs","v8_events","v8_insights")}
+        out={"v6_vectors":c.execute("SELECT COUNT(*) FROM v6_vectors").fetchone()[0],"v7_research_runs":c.execute("SELECT COUNT(*) FROM v7_research_runs").fetchone()[0],"v8_events":c.execute("SELECT COUNT(*) FROM v8_events").fetchone()[0],"v8_insights":c.execute("SELECT COUNT(*) FROM v8_insights").fetchone()[0],"v9":v9_status(c)}
     print(json.dumps(out,ensure_ascii=False)); c.close()
 if __name__=="__main__": main()
