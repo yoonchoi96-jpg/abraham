@@ -1,35 +1,68 @@
-# Obsidian Manager v0.1
+# Hendrix v0.2
 
-Read-only Vault audit engine for the Invest Insight Obsidian vault.
+Hendrix is the Obsidian Vault management layer shared by Abraham, Abel, Jacques, and Omari.
 
-## Design rule
+It is not the tutor, knowledge classifier, music engine, or AI orchestrator.
 
-Obsidian Manager is not an alternative classifier. It never decides or rewrites Abraham-owned classification, entity, rating, source, or relation metadata.
+## Role
+- Vault integrity and structure
+- Metadata ownership governance
+- Link and backlink integrity
+- Future embedding/index management
+- Safe write boundary for Obsidian
+- Integration boundary between the other systems and Obsidian
 
-V0.1 only scans and reports.
+## Ownership rule
+Hendrix must never silently take ownership of metadata created by another system.
 
-## Checks
+### Abraham-owned
+entity, entities, rating, source, source_url, source_id, readwise_id, classification, category, relations, relation
 
+### Abel-owned
+abel_subject, abel_level, abel_learning_state, abel_mastery, abel_priority, abel_wrong_count, abel_correct_count, abel_last_wrong, abel_saved
+
+### Hendrix-owned
+hendrix_id, hendrix_indexed, hendrix_embedding, hendrix_last_audit, hendrix_integrity
+
+Unknown metadata is protected by default until ownership is explicitly declared.
+
+## V0.2 checks
 - Markdown inventory
 - duplicate filename/stem detection
 - frontmatter errors
 - broken wikilinks
 - broken relative Markdown links
-- Abraham-owned metadata observed
+- metadata ownership
+- unknown metadata-owner detection
 - empty Markdown files
 - basic path statistics
 
 ## Safety
+V0.2 remains read-only.
+- No Vault writes
+- No renames
+- No deletes
+- No LLM calls
+- No automatic metadata changes
+- Abraham and Abel metadata are explicitly non-writable by Hendrix
+- Unknown metadata is non-writable by Hendrix
 
-- Read-only by construction.
-- No file writes, renames, or deletes.
-- No API calls.
-- No LLM calls.
-- Exit code is non-zero only with --fail-on-issues.
+The JSON report is an external audit artifact, not a Vault mutation.
 
 ## Usage
-
     python -m obsidian_manager.audit /path/to/Invest\ Insight
     python -m obsidian_manager.audit /path/to/Invest\ Insight --json report.json
+    python -m obsidian_manager.audit /path/to/Invest\ Insight --fail-on-issues
 
-The report becomes the input contract for later safe repair proposals, embedding indexing, and learning/article linking.
+## Architecture
+    Omari
+      |
+      +-- Abraham  (knowledge processing)
+      +-- Abel     (personal learning)
+      +-- Jacques  (music intelligence)
+      |
+      +-- Hendrix  (Obsidian management)
+             |
+             +-- Obsidian
+
+Hendrix is infrastructure. It does not decide what the user's knowledge means and it does not decide how the user should study.
