@@ -88,6 +88,8 @@ jobs:
           gh release upload state-current data/readwise_pipeline.db --clobber
 
       - name: Run Abraham
+        id: abraham
+        continue-on-error: true
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           OBSIDIAN_API_URL: https://127.0.0.1:27124
@@ -123,15 +125,28 @@ jobs:
             python run_v560_storage.py --apply
           fi
 
+      - name: Persist partial SQLite state
+        if: always() && steps.abraham.outcome != 'cancelled'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -s data/readwise_pipeline.db
+          python scripts/verify_state.py --db data/readwise_pipeline.db
+          gh release upload state-current data/readwise_pipeline.db --clobber
+          echo "PARTIAL_STATE_PERSISTED_AFTER_ABRAHAM"
       - name: Run V6-V8 intelligence
+        if: steps.abraham.outcome == 'success'
         env:
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
         run: python run_v6_v8.py --mode autonomous --limit 250
 
       - name: Validate final SQLite state
+        if: steps.abraham.outcome == 'success'
         run: python scripts/verify_state.py --db data/readwise_pipeline.db
 
       - name: Refresh persistent state release
+        if: steps.abraham.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
