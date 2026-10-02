@@ -150,3 +150,16 @@ def test_salvage_truncated_korean_json():
     result = _salvage_korean_documents(raw)
 
     assert [x["index"] for x in result] == [0, 1]
+
+
+def test_translate_parser_maps_indexes_to_document_ids(monkeypatch):
+    import run_v560_storage as mod
+    class Response:
+        text = '{"documents":[{"index":0,"korean_title":"A","korean_text":"첫째","translation_notes":[]},{"index":2,"korean_title":"C","korean_text":"셋째","translation_notes":[]}]}'
+    class Models:
+        def generate_content(self, **kwargs): return Response()
+    class Client:
+        models = Models()
+    docs = _documents(3)
+    result = mod.translate_korean_batch(Client(), docs)
+    assert [x["document_id"] for x in result] == ["doc-0", "doc-2"]
