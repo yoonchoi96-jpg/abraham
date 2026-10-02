@@ -253,6 +253,48 @@ Documents:
 # DEEPSEEK JSON OUTPUT / RETRY CONFIGURATION
 # ============================================================
 
+def _salvage_korean_documents(raw):
+    """Recover complete document objects from a truncated JSON response."""
+    if not isinstance(raw, str):
+        return []
+    start = raw.find('"documents"')
+    if start < 0:
+        return []
+    array_start = raw.find("[", start)
+    if array_start < 0:
+        return []
+
+    decoder = json.JSONDecoder()
+    pos = array_start + 1
+    recovered = []
+
+    while pos < len(raw):
+        while pos < len(raw) and raw[pos].isspace():
+            pos += 1
+        if pos >= len(raw) or raw[pos] == "]":
+            break
+        if raw[pos] == ",":
+            pos += 1
+            continue
+        if raw[pos] != "{":
+            next_object = raw.find("{", pos)
+            if next_object < 0:
+                break
+            pos = next_object
+        try:
+            item, end = decoder.raw_decode(raw, pos)
+        except json.JSONDecodeError:
+            # The current object is incomplete. Everything before it that
+            # decoded successfully is safe to keep; the caller retries only
+            # documents not represented by those recovered indexes.
+            break
+        if isinstance(item, dict):
+            recovered.append(item)
+        pos = end
+
+    return recovered
+
+
 def translate_korean_batch(
     client,
     documents,
@@ -290,34 +332,42 @@ def translate_korean_batch(
                     raw,
                 )
 
-            result = json.loads(raw)
+            try:
+                result = json.loads(raw)
+                output = result.get("documents", [])
+            except json.JSONDecodeError as exc:
+                output = _salvage_korean_documents(raw)
+                if output:
+                    print(
+                        f"[KOREAN PARTIAL JSON] recovered "
+                        f"{len(output)}/{len(documents)} complete documents "
+                        f"before JSON truncation: {exc}"
+                    )
+                else:
+                    raise
 
-            output = result.get(
-                "documents",
-                [],
-            )
+            if not isinstance(output, list):
+                raise ValueError("documents must be a list")
 
-            if not isinstance(
-                output,
-                list,
-            ):
-                raise ValueError(
-                    "documents must be a list"
-                )
-
-            expected_indexes = set(
-                range(len(documents))
-            )
-
+            expected_indexes = set(range(len(documents)))
             actual_indexes = {
                 x.get("index")
                 for x in output
                 if isinstance(x, dict)
             }
 
-            if expected_indexes != actual_indexes:
+            unknown_indexes = actual_indexes - expected_indexes
+            if unknown_indexes:
                 raise ValueError(
-                    "Korean translation indexes mismatch"
+                    "Korean translation indexes out of range"
+                )
+
+            missing_indexes = expected_indexes - actual_indexes
+            if missing_indexes:
+                print(
+                    f"[KOREAN PARTIAL] response contains "
+                    f"{len(output)}/{len(documents)} documents; "
+                    f"missing indexes={sorted(missing_indexes)}"
                 )
 
             for item in output:
