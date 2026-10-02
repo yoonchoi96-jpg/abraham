@@ -1680,9 +1680,30 @@ def apply_files_via_obsidian_rest(
     if len(target_paths) != len(set(target_paths)):
         raise RuntimeError("Duplicate document target filenames detected.")
 
-    # Preflight remote state and create local backups from the API before mutation.
+    def _same_obsidian_document(existing_content: str, preview: dict) -> bool:
+        """Identify an existing remote note belonging to this Readwise document."""
+        document = preview.get("document") or {}
+        candidates = {
+            "readwise_id": str(document.get("readwise_id") or "").strip(),
+            "document_id": str(preview.get("document_id") or document.get("document_id") or "").strip(),
+        }
+        for key, value in candidates.items():
+            if not value:
+                continue
+            pattern = rf"(?m)^{re.escape(key)}:\\s*[\\\"']?{re.escape(value)}[\\\"']?\\s*$"
+            if re.search(pattern, existing_content):
+                return True
+        return False
+
+    # Preflight remote state. The Mac runner does not share the Obsidian
+    # vault filesystem, so local Path.exists() cannot detect remote notes.
+    # If the target already exists and is the same Readwise document, treat
+    # it as an update rather than a fatal "new document" collision. If it is
+    # a different document, move the new note to the next available filename.
     remote_existing = {}
-    for _, current, target in operations:
+    resolved_operations = []
+    reserved_targets = set()
+    for preview, current, target in operations:
         if current:
             content = writer.read(current)
             if content is None:
@@ -1690,8 +1711,35 @@ def apply_files_via_obsidian_rest(
             remote_existing[current] = content
             if current != target and writer.read(target) is not None:
                 raise RuntimeError(f"Filename target collision in Obsidian: {target}")
-        elif writer.read(target) is not None:
-            raise RuntimeError(f"New document target already exists in Obsidian: {target}")
+            resolved_operations.append((preview, current, target))
+            reserved_targets.add(target)
+            continue
+
+        existing = writer.read(target)
+        if existing is None:
+            resolved_operations.append((preview, None, target))
+            reserved_targets.add(target)
+            continue
+
+        if _same_obsidian_document(existing, preview):
+            remote_existing[target] = existing
+            resolved_operations.append((preview, target, target))
+            reserved_targets.add(target)
+            print(f"[OBSIDIAN UPDATE] Existing note belongs to document_id={preview.get('document_id')}; updating {target}")
+            continue
+
+        base = Path(target)
+        n = 2
+        while True:
+            candidate = _obsidian_relative_path(str(base.with_name(f"{base.stem} ({n}){base.suffix}")))
+            if candidate not in reserved_targets and writer.read(candidate) is None:
+                break
+            n += 1
+        resolved_operations.append((preview, None, candidate))
+        reserved_targets.add(candidate)
+        print(f"[OBSIDIAN COLLISION] Existing different note at {target}; using {candidate}")
+
+    operations = resolved_operations
 
     entity_operations = []
     for preview in entity_previews:
