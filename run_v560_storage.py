@@ -359,10 +359,25 @@ def translate_korean_batch(
                 or "high demand" in error_text.lower()
             )
 
+            is_content_risk = (
+                "Content Exists Risk" in error_text
+                or "content_exists_risk" in error_text.lower()
+            )
+
             is_429 = (
                 "429" in error_text
                 or "RESOURCE_EXHAUSTED" in error_text
             )
+
+            if is_content_risk:
+                # HTTP 400 content-risk rejection is not transient.
+                # Do not spend retry/backoff time; the resilient caller
+                # will isolate the offending document by splitting.
+                print(
+                    "[KOREAN CONTENT RISK] "
+                    "DeepSeek rejected this request; skipping retries."
+                )
+                return []
 
             if is_503:
                 if attempt < KOREAN_MAX_RETRIES - 1:
