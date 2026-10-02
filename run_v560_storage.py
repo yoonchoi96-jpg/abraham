@@ -36,7 +36,7 @@ from adaptive_batch import plan_adaptive_batches, batch_stats
 
 
 VERSION = "5.6.1"
-PROMPT_VERSION = "5.6.2-korean-adaptive"
+PROMPT_VERSION = "5.6.3-korean-adaptive-minimal"
 
 load_dotenv()
 
@@ -237,8 +237,7 @@ Schema:
     {{
       "index": 0,
       "korean_title": "...",
-      "korean_text": "...",
-      "translation_notes": []
+      "korean_text": "..."
     }}
   ]
 }}
@@ -976,7 +975,7 @@ def translate_documents_to_korean(
                     "canonical_text": canonical,
                     "korean_title": item["korean_title"],
                     "korean_text": item["korean_text"],
-                    "translation_notes": item.get("translation_notes", []),
+                    "translation_notes": [],
                     "prompt_version": PROMPT_VERSION,
                     "model": MODEL,
                     "cache_key": cache_key,
