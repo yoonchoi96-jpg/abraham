@@ -6,7 +6,7 @@ import argparse
 import os
 
 from abraham_sqlite import connect as connect_db, load_documents
-from abraham_incremental import ensure_schema, select_pending_documents, mark_started, mark_completed
+from abraham_incremental import ensure_schema, select_pending_documents, mark_started, mark_completed, mark_failed
 from entity_relation_ai import extract_and_persist
 from run_v560_storage import normalize_document_ids, prepare_source_content, _processing_gate
 
@@ -47,7 +47,15 @@ def main():
         print("Nothing pending.")
         return
 
-    stats = extract_and_persist(pending, apply=args.apply)
+    try:
+        stats = extract_and_persist(pending, apply=args.apply)
+    except Exception as exc:
+        if args.apply:
+            with connect_db() as conn:
+                ensure_schema(conn)
+                mark_failed(conn, pending, stage, exc)
+        raise
+
     processed_ids = {str(x) for x in stats.get("processed_readwise_ids", [])}
     processed = [d for d in pending if str(d.get("readwise_id") or "") in processed_ids]
 
