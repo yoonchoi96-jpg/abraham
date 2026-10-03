@@ -107,13 +107,13 @@ def _load_relations(conn: sqlite3.Connection) -> list[dict]:
         FROM relations r
         LEFT JOIN entities se ON se.entity_id = r.subject_entity_id
         LEFT JOIN entities oe ON oe.entity_id = r.object_entity_id
-        WHERE LOWER(COALESCE(status, '')) IN (
+        WHERE LOWER(COALESCE(r.status, '')) IN (
             'validated',
             'valid',
             'accepted',
             'confirmed'
         )
-        ORDER BY relation_id
+        ORDER BY r.relation_id
     """).fetchall()
 
     result = []
