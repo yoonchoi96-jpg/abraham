@@ -140,19 +140,7 @@ jobs:
           [ -n "${limit}" ] || limit="${ABRAHAM_BATCH_LIMIT}"
           [ -n "${limit}" ] || limit="1000"
           echo "Core workload limit: ${limit} documents"
-          echo "Obsidian apply is deferred to the Mac worker."
           .venv/bin/python run_v560_storage.py --apply --limit "${limit}"
-
-      - name: Persist core SQLite state
-        if: always() && steps.abraham.outcome != 'cancelled'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test -s data/readwise_pipeline.db
-          .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
-          gh release upload state-current data/readwise_pipeline.db --clobber
-
 
       - name: Persist SQLite and Obsidian vault state
         if: always() && steps.abraham.outcome != 'cancelled'
