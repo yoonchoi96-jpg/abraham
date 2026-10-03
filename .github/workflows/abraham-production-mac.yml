@@ -8,7 +8,7 @@ name: Abraham V5.6.3 Production Mac
       limit:
         description: "Maximum uncached documents for this run"
         required: false
-        default: ""
+        default: "120"
 
 permissions:
   contents: write
@@ -116,20 +116,19 @@ jobs:
           ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
           ABRAHAM_SCHEDULE_KST: "00:00,03:00,06:00,09:00,12:00,15:00,18:00,21:00"
-          ABRAHAM_BATCH_LIMIT: ""
+          ABRAHAM_BATCH_LIMIT: "120"
           PYTHONUNBUFFERED: "1"
         run: |
           limit="${{ inputs.limit }}"
           if [ -z "${limit}" ]; then
             limit="${ABRAHAM_BATCH_LIMIT}"
           fi
-          if [ -n "${limit}" ]; then
-            echo "Workload limit: ${limit} documents"
-            python run_v560_storage.py --apply --limit "${limit}"
-          else
-            echo "Workload limit: UNBOUNDED DRAIN MODE"
-            python run_v560_storage.py --apply
+          if [ -z "${limit}" ]; then
+            limit="120"
           fi
+          echo "Workload limit: ${limit} documents"
+          echo "Bounded drain mode: every scheduled run reaches Entity/Relation/Apply for its completed slice."
+          python run_v560_storage.py --apply --limit "${limit}"
 
       - name: Persist partial SQLite state
         if: always() && steps.abraham.outcome != 'cancelled'
