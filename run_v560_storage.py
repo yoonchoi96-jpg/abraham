@@ -2434,7 +2434,7 @@ def run_pipeline(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Abraham V5 Cloud-ready pipeline")
-    parser.add_argument("--apply", action="store_true", help="Actually modify Obsidian files.")
+    parser.add_argument("--apply", action="store_true", help="Persist pipeline results and, unless deferred, modify Obsidian files.")\n    parser.add_argument("--skip-obsidian-apply", action="store_true", help="Persist all core AI/graph results but defer document/entity Obsidian writes to the Mac worker.")
     parser.add_argument("--limit", type=int, default=None, help="Process only the first N documents after cache filtering.")
     parser.add_argument("--readwise-id", action="append", default=None, help="Process only specified Readwise IDs. Can be repeated.")
     parser.add_argument("--print-schedule", action="store_true", help="Print the configured KST schedule and exit.")
