@@ -74,3 +74,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Validation trigger: graph drain + Obsidian Headless Sync.
