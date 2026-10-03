@@ -1,6 +1,8 @@
 name: Abraham V5.6.3 Core Cloud
 
 "on":
+  push:
+    branches: ["cloud-core-validation-20261003"]
   schedule:
     - cron: "0 0,3,6,9,12,15,18,21 * * *"
   workflow_dispatch:
