@@ -49,6 +49,20 @@ jobs:
           test -s data/readwise_pipeline.db
           .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
 
+
+      - name: Restore latest Obsidian vault state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p vault
+          if gh release download state-current --pattern abraham-vault.tar.gz --dir . --clobber; then
+            tar -xzf abraham-vault.tar.gz -C vault
+            echo "Restored prior cloud vault state."
+          else
+            echo "No prior vault asset found; starting with an empty cloud vault."
+          fi
+
       - name: Sync Readwise Reader
         env:
           READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
@@ -117,6 +131,7 @@ jobs:
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
           ABRAHAM_SCHEDULE_KST: "00:00,03:00,06:00,09:00,12:00,15:00,18:00,21:00"
           ABRAHAM_BATCH_LIMIT: "1000"
+          ABRAHAM_VAULT_PATH: ${{ github.workspace }}/vault
           ABRAHAM_OBSIDIAN_SYNC_PATH: ""
           PYTHONUNBUFFERED: "1"
         run: |
@@ -126,7 +141,7 @@ jobs:
           [ -n "${limit}" ] || limit="1000"
           echo "Core workload limit: ${limit} documents"
           echo "Obsidian apply is deferred to the Mac worker."
-          .venv/bin/python run_v560_storage.py --apply --skip-obsidian-apply --limit "${limit}"
+          .venv/bin/python run_v560_storage.py --apply --limit "${limit}"
 
       - name: Persist core SQLite state
         if: always() && steps.abraham.outcome != 'cancelled'
@@ -137,6 +152,21 @@ jobs:
           test -s data/readwise_pipeline.db
           .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
           gh release upload state-current data/readwise_pipeline.db --clobber
+
+
+      - name: Persist SQLite and Obsidian vault state
+        if: always() && steps.abraham.outcome != 'cancelled'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -s data/readwise_pipeline.db
+          .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
+          gh release upload state-current data/readwise_pipeline.db --clobber
+          if [ -d vault ]; then
+            tar -czf abraham-vault.tar.gz -C vault .
+            gh release upload state-current abraham-vault.tar.gz --clobber
+          fi
 
       - name: Run V6-V9 intelligence
         if: steps.abraham.outcome == 'success'
