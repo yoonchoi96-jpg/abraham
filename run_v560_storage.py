@@ -57,7 +57,7 @@ REPORT_DIR = Path(os.getenv(
     str(VAULT_PATH / "90_Dashboard" / "auto_reports"),
 )).expanduser()
 KOREAN_BATCH_SIZE = int(os.getenv("KOREAN_BATCH_SIZE", "80"))
-KOREAN_WORKERS = max(1, int(os.getenv("ABRAHAM_TRANSLATION_WORKERS", "3")))
+KOREAN_WORKERS = max(1, int(os.getenv("ABRAHAM_TRANSLATION_WORKERS", "4")))
 KOREAN_MAX_RETRIES = int(os.getenv("KOREAN_MAX_RETRIES", "3"))
 ABRAHAM_SCHEDULE_KST = os.getenv(
     "ABRAHAM_SCHEDULE_KST",
@@ -612,7 +612,7 @@ def _validate_rating(item, expected_id):
 
 def _rate_batch(client, documents):
     response=client.models.generate_content(
-        model=os.getenv("GEMINI_RATING_MODEL", "gemini-3.6-flash"),
+        model=os.getenv("GEMINI_RATING_MODEL", "gemini-3.8-flash"),
         contents=_build_rating_prompt(documents),
         config={
             "response_mime_type": "application/json",
@@ -1872,7 +1872,7 @@ def classify_entities(registry, args):
     if not pending:
         return {}, [], entities
 
-    client = get_deepseek_client()
+    client = get_gemini_client()
     batch_size = int(os.getenv("ENTITY_CLASSIFICATION_BATCH_SIZE", "50"))
     results = {}
     for start in range(0, len(pending), batch_size):
