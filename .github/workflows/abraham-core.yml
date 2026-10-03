@@ -4,14 +4,12 @@ name: Abraham V5.6.3 Core Cloud
 "on":
   schedule:
     - cron: "0 0,3,6,9,12,15,18,21 * * *"
-  push:
-    branches: ["main"]
   workflow_dispatch:
     inputs:
       limit:
         description: "Maximum uncached documents for this run"
         required: false
-        default: "20"
+        default: "1000"
 
 permissions:
   contents: write
