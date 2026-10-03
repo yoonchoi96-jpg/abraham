@@ -1,4 +1,5 @@
 name: Abraham V5.6.3 Core Cloud
+# Cloud runner applies Obsidian vault directly; no Mac worker deferral.
 
 "on":
   schedule:
