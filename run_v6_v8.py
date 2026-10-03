@@ -19,8 +19,8 @@ def _iter_semantic_documents(conn, batch_size=1000):
     # Use Readwise updated_at as a cheap first-pass filter. index_documents()
     # still performs the authoritative content-hash check.
     cols = _columns(conn, "documents")
-    order = [x for x in ("updated_at", "last_processed_at", "first_seen_at") if x in cols]
-    order_sql = "COALESCE(" + ",".join(order + ["rowid"]) + ") DESC" if order else "rowid DESC"
+    order = [f"d.{x}" for x in ("updated_at", "last_processed_at", "first_seen_at") if x in cols]
+    order_sql = "COALESCE(" + ",".join(order + ["d.rowid"]) + ") DESC" if order else "d.rowid DESC"
 
     if "updated_at" in cols:
         sql = f"""
