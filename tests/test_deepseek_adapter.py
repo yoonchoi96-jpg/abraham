@@ -17,13 +17,15 @@ def test_deepseek_adapter_has_thinking_controls():
     assert 'reasoning_effort' in source
 
 
-def test_v56_pipeline_has_no_direct_gemini_dependency():
+def test_v56_entity_classifier_has_no_direct_gemini_dependency():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
     pipeline = (root / "run_v560_storage.py").read_text(encoding="utf-8")
     classifier = (root / "entity_classifier.py").read_text(encoding="utf-8")
 
-    assert "get_gemini_client" not in pipeline
+    # Gemini is intentionally used by V5 for the separate rating stage.
+    # Entity classification must remain provider-agnostic and use the injected client.
+    assert "get_gemini_client" in pipeline
     assert "get_gemini_client" not in classifier
     assert "get_deepseek_client" in pipeline
