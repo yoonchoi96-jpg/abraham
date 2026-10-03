@@ -442,7 +442,7 @@ def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None
     target = documents[:limit] if limit is not None else documents
     target = [d for d in target if str(d.get("readwise_id") or "").strip()]
     if not target:
-        return {"documents": 0, "api_batches": 0, "entities_created": 0, "document_entity_links": 0, "relations_created": 0}
+        return {"documents": 0, "api_batches": 0, "entities_created": 0, "document_entity_links": 0, "relations_created": 0, "processed_readwise_ids": []}
 
     batch_size = max(1, int(os.getenv("ENTITY_RELATION_BATCH_SIZE", str(DEFAULT_BATCH))))
     client = get_deepseek_client()
@@ -450,6 +450,7 @@ def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None
     links = 0
     relations = 0
     api_batches = 0
+    processed_ids = []
 
     with __import__("abraham_sqlite").connect() as conn:
         _ensure_columns(conn)
@@ -523,6 +524,7 @@ def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None
                         print(f"[RELATION INSERT FAILED] {rid}: {exc}")
 
                 conn.commit()
+                processed_ids.append(rid)
 
             print(
                 f"[ENTITY/RELATION {start + len(batch)}/{len(target)}] "
@@ -535,4 +537,5 @@ def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None
         "entities_created": created_entities,
         "document_entity_links": links,
         "relations_created": relations,
+        "processed_readwise_ids": processed_ids,
     }
