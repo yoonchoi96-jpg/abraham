@@ -1,29 +1,25 @@
-name: Abraham V5.6.3 Production Mac
+name: Abraham V5.6.3 Obsidian Mac Sync
 
 "on":
   schedule:
     - cron: "0 0,3,6,9,12,15,18,21 * * *"
   workflow_dispatch:
-    inputs:
-      limit:
-        description: "Maximum uncached documents for this run"
-        required: false
-        default: "1000"
 
 permissions:
   contents: write
 
 concurrency:
-  group: abraham-production-mac
+  group: abraham-state-pipeline
   cancel-in-progress: false
 
 jobs:
-  pipeline:
+  obsidian:
     runs-on: [self-hosted, macOS, abraham-mac]
-    timeout-minutes: 350
+    timeout-minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up local Python
         run: |
           set -euo pipefail
@@ -31,11 +27,13 @@ jobs:
           python3 -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install -r requirements.txt
+
       - name: Run regression tests
         run: |
           set -euo pipefail
           .venv/bin/python -m pip install pytest
           .venv/bin/python -m pytest -q tests
+
       - name: Check local Obsidian REST API
         env:
           OBSIDIAN_API_URL: https://127.0.0.1:27124
@@ -45,12 +43,17 @@ jobs:
           test -n "${OBSIDIAN_API_KEY}"
           .venv/bin/python - <<'PY'
           import json, os, ssl, urllib.request
-          req=urllib.request.Request(os.environ["OBSIDIAN_API_URL"].rstrip("/")+ "/",headers={"Authorization":f"Bearer {os.environ['OBSIDIAN_API_KEY']}"})
+          req=urllib.request.Request(
+              os.environ["OBSIDIAN_API_URL"].rstrip("/") + "/",
+              headers={"Authorization": f"Bearer {os.environ['OBSIDIAN_API_KEY']}"}
+          )
           with urllib.request.urlopen(req,timeout=30,context=ssl._create_unverified_context()) as r:
-              p=json.loads(r.read().decode()); assert r.status==200 and p.get("service")=="Obsidian Local REST API"
+              p=json.loads(r.read().decode())
+              assert r.status==200 and p.get("service")=="Obsidian Local REST API"
           print("Local Obsidian REST API reachable.")
           PY
-      - name: Restore SQLite state
+
+      - name: Restore latest core SQLite state
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -59,85 +62,28 @@ jobs:
           gh release download state-current --pattern readwise_pipeline.db --dir data --clobber
           test -s data/readwise_pipeline.db
           .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
-      - name: Sync Readwise Reader
-        env:
-          READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
-          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
-        run: .venv/bin/python scripts/sync_readwise.py --db data/readwise_pipeline.db --max-documents 1000 --lookback-minutes 10
-      - name: Persist synced SQLite state
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test -s data/readwise_pipeline.db
-          gh release upload state-current data/readwise_pipeline.db --clobber
-      - name: Drain Entity Relation graph
-        env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
-          GEMINI_ENTITY_RELATION_MODEL: "gemini-3.8-flash"
-          ABRAHAM_ENTITY_RELATION_THINKING: low
-          GEMINI_ENTITY_RELATION_MAX_TOKENS: "16384"
-          ABRAHAM_MIN_RELATION_CONFIDENCE: "0.80"
-        run: |
-          set -euo pipefail
-          PYTHONPATH="${GITHUB_WORKSPACE}" .venv/bin/python scripts/entity_relation_drain.py --apply --limit 1000
-      - name: Persist graph SQLite state
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test -s data/readwise_pipeline.db
-          .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
-          gh release upload state-current data/readwise_pipeline.db --clobber
-          echo "GRAPH_STATE_PERSISTED"
-      - name: Run Abraham
-        id: abraham
+
+      - name: Apply pending Obsidian renders
+        id: obsidian_apply
         continue-on-error: true
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OBSIDIAN_API_URL: https://127.0.0.1:27124
           OBSIDIAN_API_KEY: ${{ secrets.OBSIDIAN_API_KEY }}
-          MODEL: deepseek-flash
-          GEMINI_RATING_MODEL: gemini-3.8-flash
-          DEEPSEEK_THINKING: disabled
-          DEEPSEEK_MAX_TOKENS: "32768"
-          DEEPSEEK_MAX_RETRIES: "4"
-          KOREAN_BATCH_SIZE: "80"
-          ABRAHAM_KOREAN_TARGET_CHARS: "40000"
-          ABRAHAM_KOREAN_MIN_BATCH: "4"
-          ABRAHAM_KOREAN_MAX_BATCH: "80"
-          ABRAHAM_TRANSLATION_WORKERS: "4"
-          ABRAHAM_PARALLEL_AI: "1"
-          ABRAHAM_AI_MAX_WORKERS: "4"
-          ABRAHAM_TRANSLATION_THINKING: disabled
-          ABRAHAM_TRANSLATION_MAX_TOKENS: "32768"
-          ABRAHAM_RATING_THINKING: low
-          ABRAHAM_RATING_MAX_TOKENS: "16384"
-          ENTITY_RELATION_BATCH_SIZE: "20"
-          GEMINI_ENTITY_RELATION_MODEL: "gemini-3.8-flash"
-          ABRAHAM_ENTITY_RELATION_THINKING: low
-          GEMINI_ENTITY_RELATION_MAX_TOKENS: "16384"
-          ABRAHAM_MIN_RELATION_CONFIDENCE: "0.80"
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
           ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
           ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
-          ABRAHAM_SCHEDULE_KST: "00:00,03:00,06:00,09:00,12:00,15:00,18:00,21:00"
-          ABRAHAM_BATCH_LIMIT: "1000"
           ABRAHAM_OBSIDIAN_SYNC_PATH: "/Users/w/Desktop/Invest/Invest Insight"
+          ABRAHAM_BATCH_LIMIT: "1000"
+          ABRAHAM_PARALLEL_AI: "1"
           PYTHONUNBUFFERED: "1"
         run: |
-          limit="${{ inputs.limit }}"
-          [ -n "${limit}" ] || limit="${ABRAHAM_BATCH_LIMIT}"
-          [ -n "${limit}" ] || limit="1000"
-          echo "Workload limit: ${limit} documents"
-          echo "Bounded drain mode: every scheduled run reaches Entity/Relation/Apply for its completed slice."
-          .venv/bin/python run_v560_storage.py --apply --limit "${limit}"
-      - name: Persist partial SQLite state
-        if: always() && steps.abraham.outcome != 'cancelled'
+          set -euo pipefail
+          echo "Applying pending render stages from the latest cloud SQLite state."
+          .venv/bin/python run_v560_storage.py --apply --limit 1000
+
+      - name: Persist Obsidian render state
+        if: always() && steps.obsidian_apply.outcome != 'cancelled'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -145,9 +91,9 @@ jobs:
           test -s data/readwise_pipeline.db
           .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
           gh release upload state-current data/readwise_pipeline.db --clobber
-          echo "PARTIAL_STATE_PERSISTED_AFTER_ABRAHAM"
+
       - name: Push Obsidian changes through Headless Sync
-        if: always() && steps.abraham.outcome != 'cancelled'
+        if: always() && steps.obsidian_apply.outcome != 'cancelled'
         env:
           ABRAHAM_OBSIDIAN_SYNC_PATH: "/Users/w/Desktop/Invest/Invest Insight"
         run: |
@@ -161,34 +107,17 @@ jobs:
           ob sync --path "${ABRAHAM_OBSIDIAN_SYNC_PATH}"
           echo "=== Obsidian Sync status after push ==="
           ob sync-status --path "${ABRAHAM_OBSIDIAN_SYNC_PATH}" --json
-      - name: Run V6-V9 intelligence
-        if: steps.abraham.outcome == 'success'
-        env:
-          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
-        run: .venv/bin/python run_v6_v8.py --mode autonomous --limit 1000
-      - name: Validate final SQLite state
-        if: steps.abraham.outcome == 'success'
-        run: .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
-      - name: Refresh persistent state release
-        if: steps.abraham.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ github.token }}
+
+      - name: Fail if Obsidian apply failed
+        if: always() && steps.obsidian_apply.outcome == 'failure'
         run: |
-          set -euo pipefail
-          if gh release view state-current >/dev/null 2>&1; then
-            gh release upload state-current data/readwise_pipeline.db --clobber
-          else
-            gh release create state-current data/readwise_pipeline.db --title "Abraham SQLite State" --notes "Rolling persistent SQLite state for Abraham V5.6.3."
-          fi
-      - name: Fail if Abraham failed after state persistence
-        if: always() && steps.abraham.outcome == 'failure'
-        run: |
-          echo "Abraham failed, but partial SQLite state was persisted safely."
+          echo "Obsidian apply failed, but the latest core SQLite state remains persisted."
           exit 1
+
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: abraham-v5.6.3-mac-${{ github.run_id }}
+          name: abraham-v5.6.3-obsidian-${{ github.run_id }}
           path: 90_Dashboard/auto_reports/
           if-no-files-found: ignore
