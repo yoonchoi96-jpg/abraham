@@ -17,7 +17,7 @@ ENTITY_TYPES = (
 )
 
 DEFAULT_BATCH = 20
-MAX_ENTITIES_PER_DOC = 20
+MAX_ENTITIES_PER_DOC = 8
 MAX_RELATIONS_PER_DOC = 25
 MIN_RELATION_CONFIDENCE = 0.80
 
@@ -138,23 +138,36 @@ def _load_catalog(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
         "SELECT entity_id, canonical_name"
         + (", entity_type" if type_col else "")
-        + " FROM entities WHERE COALESCE(status,'active') NOT IN ('rejected','deleted')"
+        + " FROM entities WHERE COALESCE(status,'active') NOT IN ('rejected','deleted','merged')"
     ).fetchall()
-    return [
+    catalog = [
         {
             "entity_id": str(row[0]),
             "canonical_name": str(row[1]),
             "entity_type": str(row[2] or "Other") if type_col else "Other",
+            "aliases": [],
         }
         for row in rows
         if row[0] and row[1]
     ]
+    by_id = {x["entity_id"]: x for x in catalog}
+    if by_id:
+        mentions = conn.execute(
+            "SELECT entity_id, mention FROM document_entities "
+            "WHERE mention IS NOT NULL AND TRIM(mention)<>''"
+        ).fetchall()
+        for eid, mention in mentions:
+            if str(eid) in by_id:
+                by_id[str(eid)]["aliases"].append(str(mention))
+    return catalog
 
 
 def _catalog_maps(catalog: list[dict]) -> tuple[dict[str, dict], dict[str, dict]]:
     exact = {}
     for item in catalog:
         exact.setdefault(_norm(item["canonical_name"]), item)
+        for alias in item.get("aliases", []):
+            exact.setdefault(_norm(alias), item)
     return exact, {str(item["entity_id"]): item for item in catalog}
 
 
@@ -212,9 +225,10 @@ Return STRICT JSON. Extract only information explicitly supported by the supplie
 Do not use outside knowledge. Do not invent entities or relations.
 
 ENTITY RULES:
-- Extract durable knowledge entities, not generic words.
-- Include people, companies, organizations, countries, places, products, technologies,
-  concepts, events, institutions, and brands when they are meaningful to the document.
+- Extract ONLY durable, reusable knowledge entities that are useful beyond this single document.
+- Prefer entities likely to recur across the knowledge base: named people, companies,
+  organizations, countries, places, products, technologies, concepts, events, institutions,
+  and brands. Do NOT extract generic nouns, temporary examples, ordinary objects, or one-off phrases.
 - Prefer the most specific canonical name actually supported by the text.
 - canonical_name MUST be English-only and written with Latin script. Prefer the established official English name when one exists; otherwise use a natural English translation or standard English romanization.
 - NEVER use Chinese/Han, Japanese kana, Korean Hangul, Cyrillic, Arabic, Hebrew, Devanagari, or another non-Latin script in canonical_name.
