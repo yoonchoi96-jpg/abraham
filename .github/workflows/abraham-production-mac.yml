@@ -1,6 +1,8 @@
 name: Abraham V5.6.3 Production Mac
 
 "on":
+  push:
+    branches: [ main ]
   schedule:
     - cron: "0 0,3,6,9,12,15,18,21 * * *"
   workflow_dispatch:
@@ -45,7 +47,7 @@ jobs:
           test -n "${OBSIDIAN_API_KEY}"
           .venv/bin/python - <<'PY'
           import json, os, ssl, urllib.request
-          req=urllib.request.Request(os.environ["OBSIDIAN_API_URL"].rstrip("/")+"/",headers={"Authorization":f"Bearer {os.environ['OBSIDIAN_API_KEY']}"})
+          req=urllib.request.Request(os.environ["OBSIDIAN_API_URL"].rstrip("/")+ "/",headers={"Authorization":f"Bearer {os.environ['OBSIDIAN_API_KEY']}"})
           with urllib.request.urlopen(req,timeout=30,context=ssl._create_unverified_context()) as r:
               p=json.loads(r.read().decode()); assert r.status==200 and p.get("service")=="Obsidian Local REST API"
           print("Local Obsidian REST API reachable.")
@@ -113,7 +115,7 @@ jobs:
           ABRAHAM_AI_MAX_WORKERS: "4"
           ABRAHAM_TRANSLATION_THINKING: disabled
           ABRAHAM_TRANSLATION_MAX_TOKENS: "32768"
-          ABRAHAM_RATING_THINKING: disabled
+          ABRAHAM_RATING_THINKING: low
           ABRAHAM_RATING_MAX_TOKENS: "16384"
           ENTITY_RELATION_BATCH_SIZE: "20"
           GEMINI_ENTITY_RELATION_MODEL: "gemini-3.8-flash"
