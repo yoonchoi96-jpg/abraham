@@ -3,12 +3,44 @@ from __future__ import annotations
 import json
 import os
 
+
 ENTITY_TYPES = (
     "Person", "Company", "Organization", "Country", "Place",
     "Product", "Technology", "Concept", "Event", "Institution", "Brand", "Other",
 )
 
-def classify_entity_batch(client, entities):
+
+def _parse_json_object(text: str) -> dict:
+    """Parse Gemini JSON robustly, including fenced/raw JSON and harmless trailing text."""
+    raw = str(text or "").strip()
+    if not raw:
+        raise ValueError("Empty entity classification response")
+
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:].lstrip()
+
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError as first_error:
+        decoder = json.JSONDecoder()
+        start = raw.find("{")
+        if start >= 0:
+            try:
+                data, _ = decoder.raw_decode(raw[start:])
+                if isinstance(data, dict):
+                    return data
+            except json.JSONDecodeError:
+                pass
+        raise first_error
+
+    raise ValueError("Entity classification response must be a JSON object")
+
+
+def _classify_once(client, entities):
     payload = [{
         "entity_id": str(e["entity_id"]),
         "canonical_name": str(e.get("canonical_name") or ""),
@@ -32,15 +64,21 @@ def classify_entity_batch(client, entities):
     )
 
     response = client.models.generate_content(
-        model=os.getenv("GEMINI_ENTITY_CLASSIFICATION_MODEL", os.getenv("GEMINI_ENTITY_RELATION_MODEL", "gemini-3.8-flash")),
+        model=os.getenv(
+            "GEMINI_ENTITY_CLASSIFICATION_MODEL",
+            os.getenv("GEMINI_ENTITY_RELATION_MODEL", "gemini-3.8-flash"),
+        ),
         contents=prompt,
         config={
             "response_mime_type": "application/json",
             "thinking": os.getenv("ABRAHAM_ENTITY_CLASSIFICATION_THINKING", "disabled"),
-            "max_output_tokens": int(os.getenv("ABRAHAM_ENTITY_CLASSIFICATION_MAX_TOKENS", "8192")),
+            "max_output_tokens": int(
+                os.getenv("ABRAHAM_ENTITY_CLASSIFICATION_MAX_TOKENS", "8192")
+            ),
         },
     )
-    data = json.loads(response.text.strip())
+
+    data = _parse_json_object(response.text)
     items = data.get("entities")
     if not isinstance(items, list):
         raise ValueError("entities must be a list")
@@ -58,3 +96,17 @@ def classify_entity_batch(client, entities):
             raise ValueError("Invalid entity classification")
         result[entity_id] = entity_type
     return result
+
+
+def classify_entity_batch(client, entities):
+    """Classify a batch; split only when Gemini returns unusable/truncated JSON."""
+    try:
+        return _classify_once(client, entities)
+    except Exception:
+        if len(entities) <= 1:
+            raise
+        midpoint = max(1, len(entities) // 2)
+        left = classify_entity_batch(client, entities[:midpoint])
+        right = classify_entity_batch(client, entities[midpoint:])
+        left.update(right)
+        return left
