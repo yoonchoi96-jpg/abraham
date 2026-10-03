@@ -1445,8 +1445,13 @@ def _stage_output_path(document: dict) -> Path | None:
 def find_existing_document_path(document: dict) -> Path | None:
     # 1. Persisted V5 path from SQLite stage metadata.
     candidate = _stage_output_path(document)
-    if candidate is not None and candidate.exists():
-        return candidate
+    if candidate is not None:
+        # The REST writer targets the runner's connected Obsidian instance;
+        # its vault is not the same filesystem as the GitHub checkout.  The
+        # persisted stage path is therefore an identity hint even when the
+        # local Path does not exist.
+        if candidate.exists() or _obsidian_api_enabled():
+            return candidate
 
     # 2. Explicit source path, when it is already valid in the current runtime.
     original_path = str(document.get("path") or "").strip()
