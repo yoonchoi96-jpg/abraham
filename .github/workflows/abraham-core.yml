@@ -2,6 +2,8 @@ name: Abraham V5.6.3 Core Cloud
 # Cloud runner applies Obsidian vault directly; no Mac worker deferral.
 
 "on":
+  push:
+    branches: ["main"]
   schedule:
     - cron: "0 0,3,6,9,12,15,18,21 * * *"
   workflow_dispatch:
@@ -101,7 +103,7 @@ jobs:
           ABRAHAM_MIN_RELATION_CONFIDENCE: "0.80"
         run: |
           set -euo pipefail
-          limit="${{ github.event_name == 'push' && '20' || inputs.limit || '1000' }}"
+          limit="${{ '1000' }}"
           echo "Entity/Relation workload limit: ${limit} documents"
           PYTHONPATH="${GITHUB_WORKSPACE}" .venv/bin/python scripts/entity_relation_drain.py --apply --limit "${limit}"
 
@@ -152,7 +154,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           set -euo pipefail
-          limit="${{ github.event_name == 'push' && '20' || inputs.limit || '1000' }}"
+          limit="${{ '1000' }}"
           [ -n "${limit}" ] || limit="1000"
           echo "Core workload limit: ${limit} documents"
           .venv/bin/python run_v560_storage.py --apply --limit "${limit}"
@@ -175,7 +177,7 @@ jobs:
         if: steps.abraham.outcome == 'success'
         env:
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
-        run: .venv/bin/python run_v6_v8.py --mode autonomous --limit "${{ github.event_name == 'push' && '20' || inputs.limit || '1000' }}"
+        run: .venv/bin/python run_v6_v8.py --mode autonomous --limit "${{ '1000' }}"
 
       - name: Validate final SQLite state
         if: steps.abraham.outcome == 'success'
