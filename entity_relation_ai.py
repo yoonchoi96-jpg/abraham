@@ -8,7 +8,7 @@ import sqlite3
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 
-from deepseek_adapter import get_deepseek_client
+from gemini_adapter import get_gemini_client
 
 ENTITY_TYPES = (
     "Person", "Company", "Organization", "Country", "Place",
@@ -215,9 +215,13 @@ ENTITY RULES:
 - Include people, companies, organizations, countries, places, products, technologies,
   concepts, events, institutions, and brands when they are meaningful to the document.
 - Prefer the most specific canonical name actually supported by the text.
+- For Chinese/Han-script entities, output the established Korean name or natural Korean transliteration/translation. Do not leave Chinese characters as canonical_name when a Korean form is appropriate.
+- For Cyrillic-script entities, output the established Korean transliteration. Do not leave Cyrillic as canonical_name when a Korean form is appropriate.
+- Preserve the original source spelling in the mention field.
+- For Latin-script entities, preserve the established original spelling/capitalization.
 - Preserve official spelling/capitalization where clear.
 - Do not create an entity merely because a common noun is capitalized.
-- The same real-world entity appearing in several documents should use the same canonical_name.
+- The same real-world entity appearing in several documents should use the same canonical_name. Normalize Chinese/Han and Cyrillic entities to Korean canonical_name consistently across documents.
 - Do not merge distinct entities.
 - entity_type must be one of:
   Person, Company, Organization, Country, Place, Product, Technology, Concept, Event, Institution, Brand, Other.
@@ -262,12 +266,12 @@ Existing catalog:
 
 def _call(client, documents: list[dict], catalog: list[dict]) -> dict:
     response = client.models.generate_content(
-        model=os.getenv("DEEPSEEK_ENTITY_RELATION_MODEL", os.getenv("MODEL", "deepseek-flash")),
+        model=os.getenv("GEMINI_ENTITY_RELATION_MODEL", os.getenv("GEMINI_RATING_MODEL", "gemini-3.6-flash")),
         contents=_prompt(documents, catalog),
         config={
             "response_mime_type": "application/json",
-            "thinking": os.getenv("ABRAHAM_ENTITY_RELATION_THINKING", "disabled"),
-            "max_output_tokens": int(os.getenv("ABRAHAM_ENTITY_RELATION_MAX_TOKENS", "16384")),
+            "thinking": os.getenv("ABRAHAM_ENTITY_RELATION_THINKING", os.getenv("ABRAHAM_RATING_THINKING", "disabled")),
+            "max_output_tokens": int(os.getenv("GEMINI_ENTITY_RELATION_MAX_TOKENS", os.getenv("ABRAHAM_RATING_MAX_TOKENS", "16384"))),
         },
     )
     data = json.loads(response.text.strip())
@@ -445,7 +449,7 @@ def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None
         return {"documents": 0, "api_batches": 0, "entities_created": 0, "document_entity_links": 0, "relations_created": 0, "processed_readwise_ids": []}
 
     batch_size = max(1, int(os.getenv("ENTITY_RELATION_BATCH_SIZE", str(DEFAULT_BATCH))))
-    client = get_deepseek_client()
+    client = get_gemini_client()
     created_entities = 0
     links = 0
     relations = 0
