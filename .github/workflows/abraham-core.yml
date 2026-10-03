@@ -1,0 +1,175 @@
+name: Abraham V5.6.3 Core Cloud
+
+"on":
+  schedule:
+    - cron: "0 0,3,6,9,12,15,18,21 * * *"
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Maximum uncached documents for this run"
+        required: false
+        default: "1000"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: abraham-state-pipeline
+  cancel-in-progress: false
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        run: |
+          set -euo pipefail
+          python3 --version
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt
+
+      - name: Run regression tests
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m pip install pytest
+          .venv/bin/python -m pytest -q tests
+
+      - name: Restore SQLite state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p data
+          gh release download state-current --pattern readwise_pipeline.db --dir data --clobber
+          test -s data/readwise_pipeline.db
+          .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
+
+      - name: Sync Readwise Reader
+        env:
+          READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+        run: .venv/bin/python scripts/sync_readwise.py --db data/readwise_pipeline.db --max-documents 1000 --lookback-minutes 10
+
+      - name: Persist synced SQLite state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -s data/readwise_pipeline.db
+          gh release upload state-current data/readwise_pipeline.db --clobber
+
+      - name: Drain Entity Relation graph
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+          GEMINI_ENTITY_RELATION_MODEL: "gemini-3.8-flash"
+          ABRAHAM_ENTITY_RELATION_THINKING: low
+          GEMINI_ENTITY_RELATION_MAX_TOKENS: "16384"
+          ABRAHAM_MIN_RELATION_CONFIDENCE: "0.80"
+        run: |
+          set -euo pipefail
+          PYTHONPATH="${GITHUB_WORKSPACE}" .venv/bin/python scripts/entity_relation_drain.py --apply --limit 1000
+
+      - name: Persist graph SQLite state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
+          gh release upload state-current data/readwise_pipeline.db --clobber
+
+      - name: Run Abraham core
+        id: abraham
+        continue-on-error: true
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MODEL: deepseek-flash
+          GEMINI_RATING_MODEL: gemini-3.8-flash
+          DEEPSEEK_THINKING: disabled
+          DEEPSEEK_MAX_TOKENS: "32768"
+          DEEPSEEK_MAX_RETRIES: "4"
+          KOREAN_BATCH_SIZE: "80"
+          ABRAHAM_KOREAN_TARGET_CHARS: "40000"
+          ABRAHAM_KOREAN_MIN_BATCH: "4"
+          ABRAHAM_KOREAN_MAX_BATCH: "80"
+          ABRAHAM_TRANSLATION_WORKERS: "4"
+          ABRAHAM_PARALLEL_AI: "1"
+          ABRAHAM_AI_MAX_WORKERS: "4"
+          ABRAHAM_TRANSLATION_THINKING: disabled
+          ABRAHAM_TRANSLATION_MAX_TOKENS: "32768"
+          ABRAHAM_RATING_THINKING: low
+          ABRAHAM_RATING_MAX_TOKENS: "16384"
+          ENTITY_RELATION_BATCH_SIZE: "20"
+          GEMINI_ENTITY_RELATION_MODEL: "gemini-3.8-flash"
+          ABRAHAM_ENTITY_RELATION_THINKING: low
+          GEMINI_ENTITY_RELATION_MAX_TOKENS: "16384"
+          ABRAHAM_MIN_RELATION_CONFIDENCE: "0.80"
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+          ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
+          ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
+          ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
+          ABRAHAM_SCHEDULE_KST: "00:00,03:00,06:00,09:00,12:00,15:00,18:00,21:00"
+          ABRAHAM_BATCH_LIMIT: "1000"
+          ABRAHAM_OBSIDIAN_SYNC_PATH: ""
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -euo pipefail
+          limit="${{ inputs.limit }}"
+          [ -n "${limit}" ] || limit="${ABRAHAM_BATCH_LIMIT}"
+          [ -n "${limit}" ] || limit="1000"
+          echo "Core workload limit: ${limit} documents"
+          echo "Obsidian apply is deferred to the Mac worker."
+          .venv/bin/python run_v560_storage.py --apply --skip-obsidian-apply --limit "${limit}"
+
+      - name: Persist core SQLite state
+        if: always() && steps.abraham.outcome != 'cancelled'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -s data/readwise_pipeline.db
+          .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
+          gh release upload state-current data/readwise_pipeline.db --clobber
+
+      - name: Run V6-V9 intelligence
+        if: steps.abraham.outcome == 'success'
+        env:
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+        run: .venv/bin/python run_v6_v8.py --mode autonomous --limit 1000
+
+      - name: Validate final SQLite state
+        if: steps.abraham.outcome == 'success'
+        run: .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
+
+      - name: Refresh persistent state release
+        if: steps.abraham.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view state-current >/dev/null 2>&1; then
+            gh release upload state-current data/readwise_pipeline.db --clobber
+          else
+            gh release create state-current data/readwise_pipeline.db --title "Abraham SQLite State" --notes "Rolling persistent SQLite state for Abraham V5.6.3."
+          fi
+
+      - name: Fail if Abraham core failed after state persistence
+        if: always() && steps.abraham.outcome == 'failure'
+        run: |
+          echo "Abraham core failed, but partial SQLite state was persisted safely."
+          exit 1
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: abraham-v5.6.3-core-${{ github.run_id }}
+          path: 90_Dashboard/auto_reports/
+          if-no-files-found: ignore
