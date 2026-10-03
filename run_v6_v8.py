@@ -59,7 +59,7 @@ def _latest_stage_documents(conn, limit):
            WHERE status='completed'
            ORDER BY updated_at DESC
            LIMIT ?""",
-        (max(1, min(int(limit), 250)),),
+        (max(1, min(int(limit), 5000)),),
     ).fetchall()
     ids = [str(r["readwise_id"]) for r in rows]
     if not ids:
