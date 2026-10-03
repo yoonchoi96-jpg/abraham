@@ -1872,7 +1872,8 @@ def classify_entities(registry, args):
     if not pending:
         return {}, [], entities
 
-    client = get_gemini_client()
+    provider = os.getenv("ABRAHAM_ENTITY_CLASSIFICATION_PROVIDER", "gemini").strip().lower()
+    client = get_deepseek_client() if provider == "deepseek" else get_gemini_client()
     batch_size = int(os.getenv("ENTITY_CLASSIFICATION_BATCH_SIZE", "50"))
     results = {}
     for start in range(0, len(pending), batch_size):
