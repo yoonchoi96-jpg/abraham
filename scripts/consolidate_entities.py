@@ -234,7 +234,8 @@ def main():
                 (MIGRATION, action, eid, old, new, survivor, now())
             )
         c.execute(
-            "INSERT INTO entity_consolidation_runs VALUES(?,?,?,?,?)",
+            "INSERT INTO entity_consolidation_runs(migration_id,completed_at,scanned,merged,rejected,ai_names) "
+            "VALUES(?,?,?,?,?,?)",
             (MIGRATION, now(), len(rows), merged, rejected, len(mapped))
         )
         c.commit()
