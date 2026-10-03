@@ -71,6 +71,17 @@ jobs:
           set -euo pipefail
           test -s data/readwise_pipeline.db
           gh release upload state-current data/readwise_pipeline.db --clobber
+      - name: Drain Entity Relation graph
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+          DEEPSEEK_ENTITY_RELATION_MODEL: "deepseek-flash"
+          ABRAHAM_ENTITY_RELATION_THINKING: disabled
+          ABRAHAM_ENTITY_RELATION_MAX_TOKENS: "16384"
+          ABRAHAM_MIN_RELATION_CONFIDENCE: "0.80"
+        run: |
+          set -euo pipefail
+          .venv/bin/python scripts/entity_relation_drain.py --apply --limit 1000
       - name: Run Abraham
         id: abraham
         continue-on-error: true
@@ -106,6 +117,7 @@ jobs:
           ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
           ABRAHAM_SCHEDULE_KST: "00:00,03:00,06:00,09:00,12:00,15:00,18:00,21:00"
           ABRAHAM_BATCH_LIMIT: "1000"
+          ABRAHAM_OBSIDIAN_SYNC_PATH: "/Users/w/Desktop/Invest/Invest Insight"
           PYTHONUNBUFFERED: "1"
         run: |
           limit="${{ inputs.limit }}"
@@ -124,11 +136,26 @@ jobs:
           .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
           gh release upload state-current data/readwise_pipeline.db --clobber
           echo "PARTIAL_STATE_PERSISTED_AFTER_ABRAHAM"
+      - name: Push Obsidian changes through Headless Sync
+        if: always() && steps.abraham.outcome != 'cancelled'
+        env:
+          ABRAHAM_OBSIDIAN_SYNC_PATH: ${{ env.ABRAHAM_OBSIDIAN_SYNC_PATH }}
+        run: |
+          set -euo pipefail
+          command -v ob
+          echo "=== Obsidian Headless local vaults ==="
+          ob sync-list-local
+          echo "=== Obsidian Sync status before push ==="
+          ob sync-status --path "${ABRAHAM_OBSIDIAN_SYNC_PATH}" --json
+          echo "=== Running one-shot Obsidian Sync ==="
+          ob sync --path "${ABRAHAM_OBSIDIAN_SYNC_PATH}"
+          echo "=== Obsidian Sync status after push ==="
+          ob sync-status --path "${ABRAHAM_OBSIDIAN_SYNC_PATH}" --json
       - name: Run V6-V9 intelligence
         if: steps.abraham.outcome == 'success'
         env:
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
-        run: .venv/bin/python run_v6_v8.py --mode autonomous --limit 250
+        run: .venv/bin/python run_v6_v8.py --mode autonomous --limit 1000
       - name: Validate final SQLite state
         if: steps.abraham.outcome == 'success'
         run: .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
