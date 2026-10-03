@@ -82,6 +82,15 @@ jobs:
         run: |
           set -euo pipefail
           .venv/bin/python scripts/entity_relation_drain.py --apply --limit 1000
+      - name: Persist graph SQLite state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -s data/readwise_pipeline.db
+          .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
+          gh release upload state-current data/readwise_pipeline.db --clobber
+          echo "GRAPH_STATE_PERSISTED"
       - name: Run Abraham
         id: abraham
         continue-on-error: true
