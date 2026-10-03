@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import unicodedata
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 
@@ -215,13 +216,13 @@ ENTITY RULES:
 - Include people, companies, organizations, countries, places, products, technologies,
   concepts, events, institutions, and brands when they are meaningful to the document.
 - Prefer the most specific canonical name actually supported by the text.
-- For Chinese/Han-script entities, output the established Korean name or natural Korean transliteration/translation. Do not leave Chinese characters as canonical_name when a Korean form is appropriate.
-- For Cyrillic-script entities, output the established Korean transliteration. Do not leave Cyrillic as canonical_name when a Korean form is appropriate.
-- Preserve the original source spelling in the mention field.
-- For Latin-script entities, preserve the established original spelling/capitalization.
-- Preserve official spelling/capitalization where clear.
+- canonical_name MUST be English-only and written with Latin script. Prefer the established official English name when one exists; otherwise use a natural English translation or standard English romanization.
+- NEVER use Chinese/Han, Japanese kana, Korean Hangul, Cyrillic, Arabic, Hebrew, Devanagari, or another non-Latin script in canonical_name.
+- Preserve the original source spelling exactly in the mention field; mention may contain any language/script.
+- Preserve evidence_quote exactly from the source text.
+- For Latin-script entities, preserve the established English/Latin spelling when it is the appropriate canonical form.
+- The same real-world entity appearing in several documents should use the same English canonical_name across documents.
 - Do not create an entity merely because a common noun is capitalized.
-- The same real-world entity appearing in several documents should use the same canonical_name. Normalize Chinese/Han and Cyrillic entities to Korean canonical_name consistently across documents.
 - Do not merge distinct entities.
 - entity_type must be one of:
   Person, Company, Organization, Country, Place, Product, Technology, Concept, Event, Institution, Brand, Other.
@@ -278,6 +279,26 @@ def _call(client, documents: list[dict], catalog: list[dict]) -> dict:
     if not isinstance(data, dict) or not isinstance(data.get("documents"), list):
         raise ValueError("Entity/relation response must contain documents[]")
     return data
+
+
+def _is_latin_canonical(value: str) -> bool:
+    """Return True when all alphabetic characters use the Latin script."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    for ch in text:
+        if not ch.isalpha():
+            continue
+        if "LATIN" not in unicodedata.name(ch, ""):
+            return False
+    return True
+
+
+def _validate_english_canonical(name: str, field: str) -> str:
+    clean = str(name or "").strip()
+    if not _is_latin_canonical(clean):
+        raise ValueError(f"{field} must use Latin/English canonical text: {clean!r}")
+    return clean
 
 
 def _safe_confidence(value) -> float:
@@ -409,7 +430,7 @@ def _validate_item(item: dict, expected_rid: str) -> tuple[list[dict], list[dict
     for raw in raw_entities[:MAX_ENTITIES_PER_DOC]:
         if not isinstance(raw, dict):
             continue
-        name = str(raw.get("canonical_name") or "").strip()
+        name = _validate_english_canonical(raw.get("canonical_name"), "canonical_name")
         if not name or _norm(name) in seen:
             continue
         seen.add(_norm(name))
@@ -425,7 +446,7 @@ def _validate_item(item: dict, expected_rid: str) -> tuple[list[dict], list[dict
             continue
         subject = str(raw.get("subject") or "").strip()
         object_ = str(raw.get("object") or "").strip()
-        rel = str(raw.get("relation") or "").strip()
+        rel = _validate_english_canonical(raw.get("relation"), "relation")
         evidence = str(raw.get("evidence_quote") or "").strip()
         if subject and object_ and rel and evidence:
             relations.append({
