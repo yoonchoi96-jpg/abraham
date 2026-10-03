@@ -139,7 +139,7 @@ jobs:
       - name: Push Obsidian changes through Headless Sync
         if: always() && steps.abraham.outcome != 'cancelled'
         env:
-          ABRAHAM_OBSIDIAN_SYNC_PATH: ${{ env.ABRAHAM_OBSIDIAN_SYNC_PATH }}
+          ABRAHAM_OBSIDIAN_SYNC_PATH: "/Users/w/Desktop/Invest/Invest Insight"
         run: |
           set -euo pipefail
           command -v ob
