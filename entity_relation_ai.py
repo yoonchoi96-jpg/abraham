@@ -266,11 +266,11 @@ Existing catalog:
 
 def _call(client, documents: list[dict], catalog: list[dict]) -> dict:
     response = client.models.generate_content(
-        model=os.getenv("GEMINI_ENTITY_RELATION_MODEL", os.getenv("GEMINI_RATING_MODEL", "gemini-3.6-flash")),
+        model=os.getenv("GEMINI_ENTITY_RELATION_MODEL", os.getenv("GEMINI_RATING_MODEL", "gemini-3.8-flash")),
         contents=_prompt(documents, catalog),
         config={
             "response_mime_type": "application/json",
-            "thinking": os.getenv("ABRAHAM_ENTITY_RELATION_THINKING", os.getenv("ABRAHAM_RATING_THINKING", "disabled")),
+            "thinking": os.getenv("ABRAHAM_ENTITY_RELATION_THINKING", os.getenv("ABRAHAM_RATING_THINKING", "low")),
             "max_output_tokens": int(os.getenv("GEMINI_ENTITY_RELATION_MAX_TOKENS", os.getenv("ABRAHAM_RATING_MAX_TOKENS", "16384"))),
         },
     )
