@@ -20,6 +20,7 @@ from pathlib import Path
 from deepseek_adapter import get_deepseek_client
 from gemini_adapter import get_gemini_client
 from entity_classifier import classify_entity_batch
+from entity_relation_ai import extract_and_persist
 
 from abraham_sqlite import load_documents, load_documents_by_ids, connect as connect_db
 from abraham_incremental import (
@@ -2049,9 +2050,102 @@ def run_pipeline(args):
     # translation items remain in SQLite as failed and are retried later.
 
     # ------------------------------------------------------------
-    # 3. Build complete knowledge indexes from SQLite.
+    # 3. Build / grow the knowledge graph.
     # ------------------------------------------------------------
+    # Entity/relation extraction is an explicit incremental stage. During
+    # the sample-building phase it uses DeepSeek in batches; once a document
+    # has been successfully processed its content hash prevents another API
+    # call unless the source changes or the stage is forced.
+    graph_stage = "entity_relation_extraction"
+    graph_pending = []
+    graph_skipped = []
+    with connect_db() as graph_conn:
+        ensure_schema(graph_conn)
+        graph_pending, graph_skipped = select_pending_documents(
+            graph_conn,
+            documents,
+            graph_stage,
+            force_ids=args.readwise_id,
+        )
+        if args.limit is not None:
+            graph_pending = graph_pending[:args.limit]
+        if args.apply and graph_pending:
+            mark_started(
+                graph_conn,
+                graph_pending,
+                graph_stage,
+                worker_id="abraham-v5.6-graph",
+            )
+
+    graph_stats = {
+        "documents": 0,
+        "api_batches": 0,
+        "entities_created": 0,
+        "document_entity_links": 0,
+        "relations_created": 0,
+        "processed_readwise_ids": [],
+    }
+    if graph_pending:
+        graph_stats = extract_and_persist(
+            graph_pending,
+            apply=args.apply,
+        )
+        processed_ids = [
+            str(x) for x in graph_stats.get("processed_readwise_ids", [])
+        ]
+        processed_docs = [
+            d for d in graph_pending
+            if str(d.get("readwise_id") or "") in set(processed_ids)
+        ]
+        if args.apply and processed_docs:
+            with connect_db() as graph_conn:
+                ensure_schema(graph_conn)
+                mark_completed(
+                    graph_conn,
+                    processed_docs,
+                    graph_stage,
+                    {
+                        d["document_id"]: {
+                            "graph_stats": {
+                                "entities_created": graph_stats.get("entities_created", 0),
+                                "relations_created": graph_stats.get("relations_created", 0),
+                            }
+                        }
+                        for d in processed_docs
+                    },
+                    result_fields=("graph_stats",),
+                )
+
+        # Re-read the just-persisted graph so render sees newly created
+        # entities and relations, including canonical names resolved from DB.
+        refreshed, refreshed_relations = load_documents_by_ids(
+            [str(d.get("readwise_id") or "") for d in graph_pending]
+        )
+        refreshed_by_rid = {
+            str(d.get("readwise_id") or ""): d
+            for d in refreshed
+        }
+        for document in documents:
+            rid = str(document.get("readwise_id") or "")
+            if rid in refreshed_by_rid:
+                document["resolved_entities"] = refreshed_by_rid[rid].get(
+                    "resolved_entities", []
+                )
+        if refreshed_relations:
+            sqlite_relations = refreshed_relations
+
+    print()
+    print("=" * 70)
+    print("KNOWLEDGE GRAPH EXTRACTION")
+    print("=" * 70)
+    print("Graph pending/skipped   :", len(graph_pending), "/", len(graph_skipped))
+    print("Graph API batches       :", graph_stats.get("api_batches", 0))
+    print("Entities created        :", graph_stats.get("entities_created", 0))
+    print("Document-entity links   :", graph_stats.get("document_entity_links", 0))
+    print("Relations created       :", graph_stats.get("relations_created", 0))
+
     relations = get_validated_relations(sqlite_relations)
+    registry = build_entity_registry(documents)
     registry = build_entity_registry(documents)
 
     entity_classification_results, entity_classification_pending, entity_classification_skipped = classify_entities(registry, args)
@@ -2232,6 +2326,7 @@ def run_pipeline(args):
         "source": "sqlite",
         "reader_color_gate": gate_counts,
         "schedule_kst": [x.strip() for x in ABRAHAM_SCHEDULE_KST.split(",") if x.strip()],
+        "knowledge_graph": graph_stats,
         "incremental": {
             "rating_pending": len(rating_pending),
             "rating_skipped": len(rating_skipped),
@@ -2243,6 +2338,8 @@ def run_pipeline(args):
             "entity_render_skipped": len(entity_skipped),
             "entity_classification_pending": len(entity_classification_pending),
             "entity_classification_skipped": len(entity_classification_skipped),
+            "graph_extraction_pending": len(graph_pending),
+            "graph_extraction_skipped": len(graph_skipped),
         },
         "korean_presentation": {
             "enabled": True,
