@@ -518,6 +518,14 @@ def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None
                             exact[_norm(entity["canonical_name"])] = entity
                             created_entities += 1
                     try:
+                        _insert_document_entity(
+                            conn, rid, subject, raw_relation["subject"], 1.0,
+                            raw_relation["evidence_quote"],
+                        )
+                        _insert_document_entity(
+                            conn, rid, object_, raw_relation["object"], 1.0,
+                            raw_relation["evidence_quote"],
+                        )
                         if _insert_relation(conn, rid, subject, raw_relation, object_):
                             relations += 1
                     except Exception as exc:
