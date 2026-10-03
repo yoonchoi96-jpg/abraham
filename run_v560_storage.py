@@ -735,7 +735,7 @@ def rate_documents(documents,args):
     if not pending: return {},pending,skipped
     if not args.apply: return {},pending,skipped
 
-    client=get_deepseek_client(); results={}
+    client=get_gemini_client(); results={}
     for start in range(0,len(pending),KOREAN_BATCH_SIZE):
         batch=pending[start:start+KOREAN_BATCH_SIZE]
         rated, failed = _rate_batch_resilient(client,batch)
