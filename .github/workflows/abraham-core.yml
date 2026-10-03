@@ -2,6 +2,8 @@ name: Abraham V5.6.3 Core Cloud
 # Cloud runner applies Obsidian vault directly; no Mac worker deferral.
 
 "on":
+  push:
+    branches: ["main"]
   schedule:
     - cron: "0 0,3,6,9,12,15,18,21 * * *"
   workflow_dispatch:
@@ -136,6 +138,7 @@ jobs:
           ABRAHAM_RATING_THINKING: low
           ABRAHAM_RATING_MAX_TOKENS: "16384"
           ENTITY_RELATION_BATCH_SIZE: "20"
+          ENTITY_CLASSIFICATION_BATCH_SIZE: "25"
           GEMINI_ENTITY_RELATION_MODEL: "gemini-3.8-flash"
           ABRAHAM_ENTITY_RELATION_THINKING: low
           GEMINI_ENTITY_RELATION_MAX_TOKENS: "16384"
@@ -151,8 +154,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           set -euo pipefail
-          limit="${{ inputs.limit }}"
-          [ -n "${limit}" ] || limit="${ABRAHAM_BATCH_LIMIT}"
+          limit="${{ github.event_name == 'push' && '20' || inputs.limit || '1000' }}"
           [ -n "${limit}" ] || limit="1000"
           echo "Core workload limit: ${limit} documents"
           .venv/bin/python run_v560_storage.py --apply --limit "${limit}"
