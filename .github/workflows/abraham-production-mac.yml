@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   obsidian:
-    runs-on: [self-hosted, macOS, abraham-mac]
+    runs-on: [ubuntu-latest
     timeout-minutes: 180
     steps:
       - name: Checkout
