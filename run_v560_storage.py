@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from deepseek_adapter import get_deepseek_client
+from gemini_adapter import get_gemini_client
 from entity_classifier import classify_entity_batch
 
 from abraham_sqlite import load_documents, load_documents_by_ids, connect as connect_db
@@ -610,7 +611,7 @@ def _validate_rating(item, expected_id):
 
 def _rate_batch(client, documents):
     response=client.models.generate_content(
-        model=os.getenv("DEEPSEEK_RATING_MODEL", MODEL),
+        model=os.getenv("GEMINI_RATING_MODEL", "gemini-3.6-flash"),
         contents=_build_rating_prompt(documents),
         config={
             "response_mime_type": "application/json",
