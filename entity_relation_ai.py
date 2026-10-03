@@ -437,7 +437,7 @@ def _validate_item(item: dict, expected_rid: str) -> tuple[list[dict], list[dict
 
 def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None = None) -> dict:
     if not apply or not documents:
-        return {"documents": 0, "api_batches": 0, "entities_created": 0, "document_entity_links": 0, "relations_created": 0}
+        return {"documents": 0, "api_batches": 0, "entities_created": 0, "document_entity_links": 0, "relations_created": 0, "processed_readwise_ids": []}
 
     target = documents[:limit] if limit is not None else documents
     target = [d for d in target if str(d.get("readwise_id") or "").strip()]
