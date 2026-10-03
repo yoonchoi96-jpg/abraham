@@ -2255,7 +2255,7 @@ def run_pipeline(args):
                 })
 
         except Exception as exc:
-            if args.apply and render_pending:
+            if args.apply and not args.skip_obsidian_apply and render_pending:
                 mark_failed(stage_conn, render_pending, render_stage, exc)
             raise
 
@@ -2305,7 +2305,7 @@ def run_pipeline(args):
     with connect_db() as stage_conn:
         ensure_schema(stage_conn)
         entity_pending, entity_skipped = select_pending_documents(stage_conn, entity_candidates, entity_stage)
-        if args.apply and entity_pending:
+        if args.apply and not args.skip_obsidian_apply and entity_pending:
             mark_started(stage_conn, entity_pending, entity_stage, worker_id="abraham-v5.6")
 
         entity_previews = []
@@ -2318,7 +2318,7 @@ def run_pipeline(args):
                     "markdown": render_entity(entity, item["outgoing"], item["incoming"]),
                 })
         except Exception as exc:
-            if args.apply and entity_pending:
+            if args.apply and not args.skip_obsidian_apply and entity_pending:
                 mark_failed(stage_conn, entity_pending, entity_stage, exc)
             raise
 
@@ -2366,7 +2366,14 @@ def run_pipeline(args):
         "entity_previews": entity_previews,
     }
 
-    if args.apply:
+    if args.apply and args.skip_obsidian_apply:
+        print()
+        print("=" * 70)
+        print("CORE APPLY / OBSIDIAN DEFERRED")
+        print("=" * 70)
+        print("AI/graph/translation/rating results are persisted in SQLite.")
+        print("Document/entity render stages remain pending for the Mac worker.")
+    elif args.apply:
         print()
         print("=" * 70)
         print("APPLY")
@@ -2434,7 +2441,8 @@ def run_pipeline(args):
 
 def main():
     parser = argparse.ArgumentParser(description="Abraham V5 Cloud-ready pipeline")
-    parser.add_argument("--apply", action="store_true", help="Persist pipeline results and, unless deferred, modify Obsidian files.")\n    parser.add_argument("--skip-obsidian-apply", action="store_true", help="Persist all core AI/graph results but defer document/entity Obsidian writes to the Mac worker.")
+    parser.add_argument("--apply", action="store_true", help="Persist pipeline results and, unless deferred, modify Obsidian files.")
+    parser.add_argument("--skip-obsidian-apply", action="store_true", help="Persist all core AI/graph results but defer document/entity Obsidian writes to the Mac worker.")
     parser.add_argument("--limit", type=int, default=None, help="Process only the first N documents after cache filtering.")
     parser.add_argument("--readwise-id", action="append", default=None, help="Process only specified Readwise IDs. Can be repeated.")
     parser.add_argument("--print-schedule", action="store_true", help="Print the configured KST schedule and exit.")
