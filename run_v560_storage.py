@@ -54,7 +54,7 @@ REPORT_DIR = Path(os.getenv(
     "ABRAHAM_REPORT_DIR",
     str(VAULT_PATH / "90_Dashboard" / "auto_reports"),
 )).expanduser()
-KOREAN_BATCH_SIZE = int(os.getenv("KOREAN_BATCH_SIZE", "60"))
+KOREAN_BATCH_SIZE = int(os.getenv("KOREAN_BATCH_SIZE", "80"))
 KOREAN_WORKERS = max(1, int(os.getenv("ABRAHAM_TRANSLATION_WORKERS", "3")))
 KOREAN_MAX_RETRIES = int(os.getenv("KOREAN_MAX_RETRIES", "3"))
 ABRAHAM_SCHEDULE_KST = os.getenv(
