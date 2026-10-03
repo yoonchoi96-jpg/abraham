@@ -1,4 +1,4 @@
-name: Abraham V5.6.3 Obsidian Mac Sync
+name: Abraham V5.6.3 Cloud Pipeline
 
 "on":
   schedule:
@@ -13,111 +13,140 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  obsidian:
-    runs-on: [ubuntu-latest
+  abraham:
+    runs-on: ubuntu-latest
     timeout-minutes: 180
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up local Python
+      - name: Set up Python
         run: |
           set -euo pipefail
           python3 --version
           python3 -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip install pytest
 
       - name: Run regression tests
         run: |
           set -euo pipefail
-          .venv/bin/python -m pip install pytest
           .venv/bin/python -m pytest -q tests
 
-      - name: Check local Obsidian REST API
+      - name: Ensure state release exists
         env:
-          OBSIDIAN_API_URL: https://127.0.0.1:27124
-          OBSIDIAN_API_KEY: ${{ secrets.OBSIDIAN_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test -n "${OBSIDIAN_API_KEY}"
-          .venv/bin/python - <<'PY'
-          import json, os, ssl, urllib.request
-          req=urllib.request.Request(
-              os.environ["OBSIDIAN_API_URL"].rstrip("/") + "/",
-              headers={"Authorization": f"Bearer {os.environ['OBSIDIAN_API_KEY']}"}
-          )
-          with urllib.request.urlopen(req,timeout=30,context=ssl._create_unverified_context()) as r:
-              p=json.loads(r.read().decode())
-              assert r.status==200 and p.get("service")=="Obsidian Local REST API"
-          print("Local Obsidian REST API reachable.")
-          PY
+          if ! gh release view state-current >/dev/null 2>&1; then
+            gh release create state-current \
+              --title "Abraham current state" \
+              --notes "Mutable state assets for the Abraham GitHub-hosted pipeline."
+          fi
 
-      - name: Restore latest core SQLite state
+      - name: Restore latest SQLite state
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p data
-          gh release download state-current --pattern readwise_pipeline.db --dir data --clobber
+          if gh release download state-current --pattern readwise_pipeline.db --dir data --clobber; then
+            echo "Restored existing SQLite state."
+          else
+            echo "No prior SQLite state asset found; initializing from repository state."
+            if [ -f readwise_pipeline.db ]; then
+              cp readwise_pipeline.db data/readwise_pipeline.db
+            else
+              echo "No SQLite state is available." >&2
+              exit 1
+            fi
+          fi
           test -s data/readwise_pipeline.db
           .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
 
-      - name: Apply pending Obsidian renders
-        id: obsidian_apply
-        continue-on-error: true
-        env:
-          OBSIDIAN_API_URL: https://127.0.0.1:27124
-          OBSIDIAN_API_KEY: ${{ secrets.OBSIDIAN_API_KEY }}
-          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
-          ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
-          ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
-          ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
-          ABRAHAM_OBSIDIAN_SYNC_PATH: "/Users/w/Desktop/Invest/Invest Insight"
-          ABRAHAM_BATCH_LIMIT: "1000"
-          ABRAHAM_PARALLEL_AI: "1"
-          PYTHONUNBUFFERED: "1"
-        run: |
-          set -euo pipefail
-          echo "Applying pending render stages from the latest cloud SQLite state."
-          .venv/bin/python run_v560_storage.py --apply --limit 1000
-
-      - name: Persist Obsidian render state
-        if: always() && steps.obsidian_apply.outcome != 'cancelled'
+      - name: Restore latest Obsidian vault state
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test -s data/readwise_pipeline.db
+          mkdir -p vault
+          if gh release download state-current --pattern abraham-vault.tar.gz --dir . --clobber; then
+            tar -xzf abraham-vault.tar.gz -C vault
+            echo "Restored prior vault state."
+          else
+            echo "No prior vault asset found; starting with an empty cloud vault."
+          fi
+
+      - name: Entity / Relation drain
+        env:
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+          ABRAHAM_VAULT_PATH: ${{ github.workspace }}/vault
+          ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
+          ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
+          ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_ENTITY_RELATION_MODEL: gemini-3.8-flash
+          ENTITY_RELATION_BATCH_SIZE: "20"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          set -euo pipefail
+          .venv/bin/python scripts/entity_relation_drain.py --apply --limit 1000
+
+      - name: Persist graph state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
           .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
           gh release upload state-current data/readwise_pipeline.db --clobber
 
-      - name: Push Obsidian changes through Headless Sync
-        if: always() && steps.obsidian_apply.outcome != 'cancelled'
+      - name: Run parallel Rating + Translation + downstream pipeline
         env:
-          ABRAHAM_OBSIDIAN_SYNC_PATH: "/Users/w/Desktop/Invest/Invest Insight"
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+          ABRAHAM_VAULT_PATH: ${{ github.workspace }}/vault
+          ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
+          ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
+          ABRAHAM_BACKUP_PATH: ${{ github.workspace }}/90_Dashboard/auto_reports/backups
+          MODEL: deepseek-flash
+          GEMINI_RATING_MODEL: gemini-3.8-flash
+          GEMINI_ENTITY_RELATION_MODEL: gemini-3.8-flash
+          ENTITY_RELATION_BATCH_SIZE: "20"
+          ABRAHAM_PARALLEL_AI: "1"
+          ABRAHAM_AI_MAX_WORKERS: "4"
+          ABRAHAM_TRANSLATION_WORKERS: "4"
+          KOREAN_BATCH_SIZE: "80"
+          ABRAHAM_BATCH_LIMIT: "1000"
+          PYTHONUNBUFFERED: "1"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
           set -euo pipefail
-          command -v ob
-          echo "=== Obsidian Headless local vaults ==="
-          ob sync-list-local
-          echo "=== Obsidian Sync status before push ==="
-          ob sync-status --path "${ABRAHAM_OBSIDIAN_SYNC_PATH}" --json
-          echo "=== Running one-shot Obsidian Sync ==="
-          ob sync --path "${ABRAHAM_OBSIDIAN_SYNC_PATH}"
-          echo "=== Obsidian Sync status after push ==="
-          ob sync-status --path "${ABRAHAM_OBSIDIAN_SYNC_PATH}" --json
+          .venv/bin/python run_v560_storage.py --apply --limit 1000
 
-      - name: Fail if Obsidian apply failed
-        if: always() && steps.obsidian_apply.outcome == 'failure'
+      - name: Persist SQLite and vault state
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "Obsidian apply failed, but the latest core SQLite state remains persisted."
-          exit 1
+          set -euo pipefail
+          if [ -s data/readwise_pipeline.db ]; then
+            .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
+            gh release upload state-current data/readwise_pipeline.db --clobber
+          fi
+          if [ -d vault ]; then
+            tar -czf abraham-vault.tar.gz -C vault .
+            gh release upload state-current abraham-vault.tar.gz --clobber
+          fi
 
-      - name: Upload diagnostics
+      - name: Upload diagnostics and vault snapshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: abraham-v5.6.3-obsidian-${{ github.run_id }}
-          path: 90_Dashboard/auto_reports/
+          name: abraham-v5.6.3-${{ github.run_id }}
+          path: |
+            90_Dashboard/auto_reports/
+            abraham-vault.tar.gz
           if-no-files-found: ignore
