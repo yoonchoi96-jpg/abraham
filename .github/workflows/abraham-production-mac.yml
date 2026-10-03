@@ -81,7 +81,7 @@ jobs:
           ABRAHAM_MIN_RELATION_CONFIDENCE: "0.80"
         run: |
           set -euo pipefail
-          .venv/bin/python scripts/entity_relation_drain.py --apply --limit 1000
+          PYTHONPATH="${GITHUB_WORKSPACE}" .venv/bin/python scripts/entity_relation_drain.py --apply --limit 1000
       - name: Persist graph SQLite state
         env:
           GH_TOKEN: ${{ github.token }}
