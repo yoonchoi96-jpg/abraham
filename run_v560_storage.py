@@ -2216,7 +2216,7 @@ def run_pipeline(args):
             if korean_pending:
                 render_pending = [d for d in render_pending if d["document_id"] in allowed]
 
-        if args.apply and render_pending:
+        if args.apply and not args.skip_obsidian_apply and render_pending:
             mark_started(stage_conn, render_pending, render_stage, worker_id="abraham-v5.6")
 
         document_previews = []
