@@ -74,6 +74,7 @@ jobs:
       - name: Drain Entity Relation graph
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
           GEMINI_ENTITY_RELATION_MODEL: "gemini-3.8-flash"
           ABRAHAM_ENTITY_RELATION_THINKING: low
