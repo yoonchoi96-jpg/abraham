@@ -93,16 +93,20 @@ def _load_relations(conn: sqlite3.Connection) -> list[dict]:
 
     rows = conn.execute("""
         SELECT
-            relation_id,
-            readwise_id,
-            subject_entity_id,
-            relation_type,
-            object_entity_id,
-            confidence,
-            evidence_quote,
-            evidence_start_hint,
-            status
-        FROM relations
+            r.relation_id,
+            r.readwise_id,
+            r.subject_entity_id,
+            r.relation_type,
+            r.object_entity_id,
+            r.confidence,
+            r.evidence_quote,
+            r.evidence_start_hint,
+            r.status,
+            se.canonical_name AS subject_name,
+            oe.canonical_name AS object_name
+        FROM relations r
+        LEFT JOIN entities se ON se.entity_id = r.subject_entity_id
+        LEFT JOIN entities oe ON oe.entity_id = r.object_entity_id
         WHERE LOWER(COALESCE(status, '')) IN (
             'validated',
             'valid',
@@ -127,10 +131,12 @@ def _load_relations(conn: sqlite3.Connection) -> list[dict]:
             "readwise_id": str(row["readwise_id"] or ""),
             "subject": {
                 "entity_id": str(subject_id),
+                "canonical_name": str(row["subject_name"] or ""),
             },
             "relation": str(relation_type),
             "object": {
                 "entity_id": str(object_id),
+                "canonical_name": str(row["object_name"] or ""),
             },
         }
 
