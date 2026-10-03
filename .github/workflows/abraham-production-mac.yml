@@ -100,7 +100,7 @@ jobs:
           OBSIDIAN_API_URL: https://127.0.0.1:27124
           OBSIDIAN_API_KEY: ${{ secrets.OBSIDIAN_API_KEY }}
           MODEL: deepseek-flash
-          GEMINI_RATING_MODEL: gemini-3.6-flash
+          GEMINI_RATING_MODEL: gemini-3.8-flash
           DEEPSEEK_THINKING: disabled
           DEEPSEEK_MAX_TOKENS: "32768"
           DEEPSEEK_MAX_RETRIES: "4"
