@@ -111,6 +111,11 @@ jobs:
           ABRAHAM_TRANSLATION_MAX_TOKENS: "32768"
           ABRAHAM_RATING_THINKING: disabled
           ABRAHAM_RATING_MAX_TOKENS: "16384"
+          ENTITY_RELATION_BATCH_SIZE: "20"
+          DEEPSEEK_ENTITY_RELATION_MODEL: "deepseek-flash"
+          ABRAHAM_ENTITY_RELATION_THINKING: disabled
+          ABRAHAM_ENTITY_RELATION_MAX_TOKENS: "16384"
+          ABRAHAM_MIN_RELATION_CONFIDENCE: "0.80"
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
           ABRAHAM_REPORT_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports
           ABRAHAM_LOG_DIR: ${{ github.workspace }}/90_Dashboard/auto_reports/logs
