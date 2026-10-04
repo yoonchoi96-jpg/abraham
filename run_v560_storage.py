@@ -2052,9 +2052,11 @@ def run_pipeline(args):
             )
             all_korean_results.update(korean_results)
 
-    # Render only documents with a completed Korean translation. Failed
-    # translation items remain in SQLite as failed and are retried later.
-
+    # Document rendering is intentionally independent from translation.
+    # A translation failure must never block the canonical source note from
+    # reaching Obsidian. Missing Korean is rendered as a pending presentation
+    # state and can be upgraded on a later run without recreating the note.
+    
     # ------------------------------------------------------------
     # 3. Build / grow the knowledge graph.
     # ------------------------------------------------------------
@@ -2181,13 +2183,24 @@ def run_pipeline(args):
     document_candidates = []
     for document in documents:
         did = document["document_id"]
-        if did not in all_korean_results:
-            print(
-                f"[RENDER SKIP] Korean translation incomplete; "
-                f"document_id={did} will be retried on the next run."
-            )
-            continue
-        korean = all_korean_results[did]
+        korean = all_korean_results.get(did, {})
+        if not korean:
+            # Keep the source document exportable even when Korean presentation
+            # is unavailable. Translation remains an independent retryable stage.
+            korean = {
+                "document_id": did,
+                "readwise_id": str(document.get("readwise_id") or ""),
+                "canonical_text": document.get("canonical_text") or document.get("content") or "",
+                "korean_title": document.get("title") or "Untitled",
+                "korean_text": "",
+                "translation_pending": True,
+                "prompt_version": PROMPT_VERSION,
+                "model": MODEL,
+            }
+            document["_translation_pending"] = True
+            print(f"[RENDER FALLBACK] Korean pending; exporting source document: document_id={did}")
+        else:
+            document["_translation_pending"] = False
         document_id_links = [x for x in document_entity_links if x["document_id"] == did]
         document_relation_links = [x for x in entity_relation_links if x.get("document_id") == did]
         render_hash = stable_text_hash(
@@ -2224,7 +2237,16 @@ def run_pipeline(args):
         try:
             for document in render_pending:
                 document_id = document["document_id"]
-                korean = all_korean_results.get(document_id, {})
+                korean = all_korean_results.get(document_id) or {
+                    "document_id": document_id,
+                    "readwise_id": str(document.get("readwise_id") or ""),
+                    "canonical_text": document.get("canonical_text") or document.get("content") or "",
+                    "korean_title": document.get("title") or "Untitled",
+                    "korean_text": "",
+                    "translation_pending": True,
+                    "prompt_version": PROMPT_VERSION,
+                    "model": MODEL,
+                }
                 korean_title = korean.get("korean_title") or document.get("title") or "Untitled"
                 document["korean_title"] = korean_title
 
@@ -2352,6 +2374,7 @@ def run_pipeline(args):
             "prompt_version": PROMPT_VERSION,
             "model": MODEL,
             "translations": len(korean_results),
+            "pending": sum(1 for d in documents if d.get("_translation_pending")),
         },
         "statistics": {
             "sqlite_documents": sqlite_documents_total,
