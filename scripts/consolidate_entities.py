@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse, json, os, re, sqlite3, unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
-from gemini_adapter import get_gemini_client
+from deepseek_adapter import get_deepseek_client
 
 MIGRATION = "entity_consolidation_v1"
 BATCH = 40
@@ -59,7 +59,7 @@ def parse_json(text):
 
 def ai_names(rows):
     if not rows: return {}
-    client = get_gemini_client()
+    client = get_deepseek_client()
     out = {}
     for start in range(0, len(rows), BATCH):
         batch = rows[start:start+BATCH]
@@ -73,12 +73,12 @@ Entities:
         for attempt in range(3):
             try:
                 r = client.models.generate_content(
-                    model=os.getenv("GEMINI_ENTITY_RELATION_MODEL", "gemini-3.8-flash"),
+                    model=os.getenv("ABRAHAM_ENTITY_CANONICAL_MODEL", "deepseek-flash"),
                     contents=prompt,
                     config={
                         "response_mime_type": "application/json",
-                        "thinking": os.getenv("ABRAHAM_ENTITY_RELATION_THINKING", "low"),
-                        "max_output_tokens": int(os.getenv("GEMINI_ENTITY_RELATION_MAX_TOKENS", "16384")),
+                        "thinking": os.getenv("ABRAHAM_ENTITY_CANONICAL_THINKING", "disabled"),
+                        "max_output_tokens": int(os.getenv("ABRAHAM_ENTITY_CANONICAL_MAX_TOKENS", "16384")),
                     },
                 )
                 data = parse_json(r.text)
@@ -151,7 +151,7 @@ def main():
         audit, merged, rejected = [], 0, 0
 
         groups = {}
-        for r in rows: groups.setdefault(norm(r[1]), []).append(r[0])
+        for r in rows: groups.setdefault((norm(r[1]), str(r[2] or "Other")), []).append(r[0])
         for ids in groups.values():
             if len(ids) > 1:
                 merge_group(c, ids, byid, audit, "duplicate_canonical")
@@ -209,7 +209,7 @@ def main():
         ).fetchall()
         byid = {r[0]: r for r in active}
         groups = {}
-        for r in active: groups.setdefault(norm(r[1]), []).append(r[0])
+        for r in active: groups.setdefault((norm(r[1]), str(r[2] or "Other")), []).append(r[0])
         for ids in groups.values():
             if len(ids) > 1:
                 merge_group(c, ids, byid, audit, "canonicalized_duplicate")
