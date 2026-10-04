@@ -174,11 +174,16 @@ def _catalog_maps(catalog: list[dict]) -> tuple[dict[str, dict], dict[str, dict]
 def _resolve_entity(name: str, entity_type: str, exact: dict[str, dict], catalog_by_id: dict[str, dict]) -> dict:
     normalized = _norm(name)
     if normalized in exact:
-        return dict(exact[normalized])
+        exact_item = exact[normalized]
+        if str(exact_item.get("entity_type") or "Other") == str(entity_type or "Other"):
+            return dict(exact_item)
+        # Never resolve the same surface form across different entity types.
 
     best = None
     best_score = 0.0
     for item in catalog_by_id.values():
+        if str(item.get("entity_type") or "Other") != str(entity_type or "Other"):
+            continue
         candidate = _norm(item["canonical_name"])
         if not candidate or not normalized:
             continue
@@ -490,6 +495,7 @@ def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None
     relations = 0
     api_batches = 0
     processed_ids = []
+    failed_ids = []
 
     with __import__("abraham_sqlite").connect() as conn:
         _ensure_columns(conn)
@@ -503,6 +509,7 @@ def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None
                 api_batches += 1
             except Exception as exc:
                 print(f"[ENTITY/RELATION BATCH FAILED] {type(exc).__name__}: {exc}")
+                failed_ids.extend(str(d.get("readwise_id") or "") for d in batch)
                 continue
 
             by_rid = {str(x.get("readwise_id") or ""): x for x in data["documents"] if isinstance(x, dict)}
@@ -510,11 +517,13 @@ def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None
                 rid = str(document.get("readwise_id") or "")
                 item = by_rid.get(rid)
                 if not item:
+                    failed_ids.append(rid)
                     continue
                 try:
                     raw_entities, raw_relations = _validate_item(item, rid)
                 except ValueError as exc:
                     print(f"[ENTITY/RELATION INVALID] {rid}: {exc}")
+                    failed_ids.append(rid)
                     continue
 
                 resolved = {}
@@ -585,4 +594,5 @@ def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None
         "document_entity_links": links,
         "relations_created": relations,
         "processed_readwise_ids": processed_ids,
+        "failed_readwise_ids": sorted(set(failed_ids) - set(processed_ids)),
     }
