@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib,json,re,sqlite3
 from collections import Counter,defaultdict
 from datetime import datetime,timezone
+from abraham_workset import filter_workset
 
 TOKEN_RE=re.compile(r"[A-Za-z0-9_\-]{2,}|[가-힣]{2,}|[一-龯]{2,}|[ぁ-ゔァ-ヴー]{2,}")
 STOP={"the","and","that","this","with","from","for","are","was","were","have","has","into","about","their","there","which","will","can","not","but","또","그리고","있는","하는","대한","통해"}
@@ -46,7 +47,7 @@ def ensure_schema(c):
 
 def _documents(c,limit=1000):
     rows=c.execute("SELECT readwise_id,title,content,canonical_text FROM documents ORDER BY rowid DESC LIMIT ?",(max(1,min(int(limit),5000)),)).fetchall()
-    return [dict(r) for r in rows]
+    return filter_workset([dict(r) for r in rows])
 
 def fingerprint(c,d):
     rid=str(d.get("readwise_id") or "").strip()
