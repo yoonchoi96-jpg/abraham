@@ -907,6 +907,8 @@ def translate_documents_to_korean(
     allow_ai=True,
     failure_reasons=None,
 ):
+    if failure_reasons is None:
+        failure_reasons = {}
     results = KoreanResults(
         _load_korean_stage_cache(documents),
         failure_reasons=failure_reasons,
