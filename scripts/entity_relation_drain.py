@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import os
 
+from abraham_workset import filter_workset
+
 from abraham_sqlite import connect as connect_db, load_documents
 from abraham_incremental import ensure_schema, select_pending_documents, mark_started, mark_completed, mark_failed
 from entity_relation_ai import extract_and_persist
@@ -27,6 +29,9 @@ def main():
         if exportable:
             document["_reader_rating_color"] = color
             gated.append(document)
+
+    gated = filter_workset(gated)
+    print("Frozen workset candidates :", len(gated))
 
     stage = "entity_relation_extraction"
     with connect_db() as conn:
