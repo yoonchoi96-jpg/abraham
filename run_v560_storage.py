@@ -35,6 +35,7 @@ from abraham_incremental import (
 from dotenv import load_dotenv
 from abraham_storage import storage_status, run_storage_maintenance
 from adaptive_batch import plan_adaptive_batches, batch_stats
+from abraham_workset import filter_workset
 
 
 VERSION = "5.6.1"
@@ -1916,6 +1917,8 @@ def run_pipeline(args):
     documents = normalize_document_ids(documents)
     documents, unavailable_documents = prepare_source_content(documents)
     sqlite_documents_total = len(documents)
+    documents = filter_workset(documents)
+    print("Frozen workset documents:", len(documents))
 
     # Reader tags are the source of truth for V5 processing/export.
     gated_documents = []
