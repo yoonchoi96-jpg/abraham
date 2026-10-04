@@ -57,7 +57,14 @@ def main():
         raise
 
     processed_ids = {str(x) for x in stats.get("processed_readwise_ids", [])}
+    failed_ids = {str(x) for x in stats.get("failed_readwise_ids", [])}
     processed = [d for d in pending if str(d.get("readwise_id") or "") in processed_ids]
+    failed = [d for d in pending if str(d.get("readwise_id") or "") in failed_ids]
+
+    if args.apply and failed:
+        with connect_db() as conn:
+            ensure_schema(conn)
+            mark_failed(conn, failed, stage, RuntimeError("Entity/relation extraction produced no valid result"))
 
     if args.apply and processed:
         with connect_db() as conn:
@@ -78,6 +85,7 @@ def main():
     print("Entities created         :", stats.get("entities_created", 0))
     print("Document-entity links    :", stats.get("document_entity_links", 0))
     print("Relations created        :", stats.get("relations_created", 0))
+    print("Failed documents         :", len(failed))
 
 
 if __name__ == "__main__":
