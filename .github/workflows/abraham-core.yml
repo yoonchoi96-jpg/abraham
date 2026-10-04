@@ -82,11 +82,11 @@ jobs:
 
       - name: Consolidate and canonicalize Entity graph
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
-          GEMINI_ENTITY_RELATION_MODEL: "gemini-3.8-flash"
-          ABRAHAM_ENTITY_RELATION_THINKING: low
-          GEMINI_ENTITY_RELATION_MAX_TOKENS: "16384"
+          ABRAHAM_ENTITY_CANONICAL_MODEL: "deepseek-flash"
+          ABRAHAM_ENTITY_CANONICAL_THINKING: disabled
+          ABRAHAM_ENTITY_CANONICAL_MAX_TOKENS: "16384"
         run: |
           set -euo pipefail
           PYTHONPATH="${GITHUB_WORKSPACE}" .venv/bin/python scripts/consolidate_entities.py --db data/readwise_pipeline.db
