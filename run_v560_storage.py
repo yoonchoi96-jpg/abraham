@@ -298,6 +298,18 @@ def _salvage_korean_documents(raw):
     return recovered
 
 
+class KoreanBatchFailure(RuntimeError):
+    """Terminal failure for a Korean translation batch."""
+
+
+class KoreanResults(dict):
+    """Translation results plus per-document terminal failure reasons."""
+
+    def __init__(self, *args, failure_reasons=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._failure_reasons = failure_reasons or {}
+
+
 def translate_korean_batch(
     client,
     documents,
@@ -431,7 +443,9 @@ def translate_korean_batch(
                     "[KOREAN CONTENT RISK] "
                     "DeepSeek rejected this request; skipping retries."
                 )
-                return []
+                raise KoreanBatchFailure(
+                    f"content_exists_risk: {error_text}"
+                )
 
             if is_503:
                 if attempt < KOREAN_MAX_RETRIES - 1:
@@ -453,12 +467,9 @@ def translate_korean_batch(
                     time.sleep(delay)
                     continue
 
-                print(
-                    "[KOREAN FAILED] "
-                    "503 persisted after all retries. "
-                    "Skipping batch."
+                raise KoreanBatchFailure(
+                    f"503_persistent: {error_text}"
                 )
-                return []
 
             if is_429:
                 # 429 can mean temporary RPM/rate limiting OR
@@ -483,13 +494,9 @@ def translate_korean_batch(
                     time.sleep(delay)
                     continue
 
-                print(
-                    "[KOREAN FAILED] "
-                    "429 persisted after all retries. "
-                    "Skipping batch; successful cache "
-                    "entries remain preserved."
+                raise KoreanBatchFailure(
+                    f"429_persistent: {error_text}"
                 )
-                return []
 
             if attempt < KOREAN_MAX_RETRIES - 1:
                 delay = 2 * (attempt + 1)
@@ -507,14 +514,9 @@ def translate_korean_batch(
                 time.sleep(delay)
                 continue
 
-            print(
-                "[KOREAN FAILED] "
-                f"{type(e).__name__}: {e}"
+            raise KoreanBatchFailure(
+                f"{type(e).__name__}: {error_text}"
             )
-            print(
-                "[KOREAN FAILED] Skipping batch."
-            )
-            return []
 
     return []
 
@@ -809,61 +811,65 @@ def _load_korean_stage_cache(documents):
     return results
 
 
-def _translate_korean_resilient(client, batch, stage_depth=0):
-    """Translate a batch and retry only documents missing from a partial response.
-
-    A large JSON response may be truncated after several complete document
-    objects. Those valid objects are kept immediately; only missing documents
-    are sent back to the model. Recursive half-splitting is the last-resort
-    fallback for responses that contain no salvageable documents.
-    """
+def _translate_korean_resilient(
+    client,
+    batch,
+    stage_depth=0,
+    failure_reasons=None,
+):
+    """Translate with recursive isolation while preserving terminal failure reasons."""
     if not batch:
         return []
-
-    translated = translate_korean_batch(client, batch)
+    if failure_reasons is None:
+        failure_reasons = {}
+    try:
+        translated = translate_korean_batch(client, batch)
+    except KoreanBatchFailure as exc:
+        reason = str(exc)
+        if len(batch) <= 1:
+            document_id = batch[0].get("document_id")
+            failure_reasons[document_id] = reason
+            print(
+                "[KOREAN FAILED] single-document batch still failed; "
+                f"document_id={document_id}; reason={reason}"
+            )
+            return []
+        midpoint = max(1, len(batch) // 2)
+        left, right = batch[:midpoint], batch[midpoint:]
+        print(
+            f"[KOREAN SPLIT] {reason}; isolating failure in "
+            f"{len(left)} + {len(right)} docs"
+        )
+        return (
+            _translate_korean_resilient(client, left, stage_depth + 1, failure_reasons)
+            + _translate_korean_resilient(client, right, stage_depth + 1, failure_reasons)
+        )
     if translated:
         translated_ids = {item.get("document_id") for item in translated}
-        missing = [
-            d for d in batch
-            if d.get("document_id") not in translated_ids
-        ]
+        missing = [d for d in batch if d.get("document_id") not in translated_ids]
         if missing:
             print(
                 f"[KOREAN PARTIAL] recovered {len(translated)}/{len(batch)} docs; "
                 f"retrying only {len(missing)} missing docs"
             )
-            recovered = _translate_korean_resilient(
-                client, missing, stage_depth + 1
+            translated += _translate_korean_resilient(
+                client, missing, stage_depth + 1, failure_reasons
             )
-            translated = translated + recovered
-
         if stage_depth:
             print(
                 f"[KOREAN RECOVERED] {len(translated)}/{len(batch)} docs "
                 f"at depth {stage_depth}"
             )
         return translated
-
     if len(batch) <= 1:
-        print(
-            "[KOREAN FAILED] single-document batch still failed; "
-            f"document_id={batch[0].get('document_id')}"
-        )
+        document_id = batch[0].get("document_id")
+        failure_reasons[document_id] = "unknown_terminal_translation_failure"
         return []
-
     midpoint = max(1, len(batch) // 2)
-    left = batch[:midpoint]
-    right = batch[midpoint:]
-    print(
-        f"[KOREAN SPLIT] no salvageable output from {len(batch)} docs; "
-        f"retrying as {len(left)} + {len(right)}"
-    )
-
     return (
-        _translate_korean_resilient(client, left, stage_depth + 1)
-        + _translate_korean_resilient(client, right, stage_depth + 1)
+        _translate_korean_resilient(client, batch[:midpoint], stage_depth + 1, failure_reasons)
+        + _translate_korean_resilient(client, batch[midpoint:], stage_depth + 1, failure_reasons)
     )
-
 
 def _persist_korean_results(documents, translated):
     """Persist a successfully translated batch immediately to SQLite."""
@@ -899,8 +905,12 @@ def translate_documents_to_korean(
     documents,
     limit=None,
     allow_ai=True,
+    failure_reasons=None,
 ):
-    results = _load_korean_stage_cache(documents)
+    results = KoreanResults(
+        _load_korean_stage_cache(documents),
+        failure_reasons=failure_reasons,
+    )
     pending = [
         d for d in documents
         if d["document_id"] not in results
@@ -911,7 +921,10 @@ def translate_documents_to_korean(
 
     if limit is not None:
         pending = pending[:limit]
-        print("Korean selected for DeepSeek:", len(pending))
+        if limit == 0 and not allow_ai:
+            print("Korean cache-only refresh: AI selection disabled")
+        else:
+            print("Korean selected for DeepSeek:", len(pending))
 
     if not pending or not allow_ai:
         if not pending:
@@ -944,7 +957,11 @@ def translate_documents_to_korean(
     def process_batch(number, batch):
         # One client per worker avoids sharing mutable client state across threads.
         client = get_korean_client()
-        translated = _translate_korean_resilient(client, batch)
+        translated = _translate_korean_resilient(
+            client,
+            batch,
+            failure_reasons=failure_reasons,
+        )
         _persist_korean_results(batch, translated)
         return number, batch, translated
 
@@ -2028,21 +2045,27 @@ def run_pipeline(args):
                 d for d in korean_pending
                 if d["document_id"] in missing_ids
             ]
-            error = RuntimeError(
-                "Korean translation incomplete; "
-                f"missing {len(missing_ids)} document(s)"
-            )
+            failure_reasons = getattr(korean_results, "_failure_reasons", {})
             with connect_db() as stage_conn:
-                mark_failed(
-                    stage_conn,
-                    failed_docs,
-                    korean_stage,
-                    error,
-                )
+                for failed_doc in failed_docs:
+                    reason = failure_reasons.get(
+                        failed_doc["document_id"],
+                        "Korean translation incomplete; no terminal reason captured",
+                    )
+                    mark_failed(
+                        stage_conn,
+                        [failed_doc],
+                        korean_stage,
+                        RuntimeError(f"Korean translation failed: {reason}"),
+                    )
+                    print(
+                        "[KOREAN FAILURE RECORDED] "
+                        f"document_id={failed_doc['document_id']} reason={reason}"
+                    )
             print(
                 "[KOREAN PARTIAL RUN] "
                 f"{len(missing_ids)} document(s) failed translation; "
-                "keeping them pending for the next run."
+                "successful translations remain cached."
             )
 
             # Do not abort the entire pipeline because a small number of
