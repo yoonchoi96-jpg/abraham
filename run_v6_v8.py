@@ -9,6 +9,7 @@ from v6_semantic import ensure_schema as v6_schema, index_documents, search
 from v7_research import ensure_schema as v7_schema
 from v8_autonomous import ensure_schema as v8_schema, detect
 from v9_intelligence import ensure_schema as v9_schema, process as v9_process, status as v9_status
+from abraham_workset import filter_workset
 
 
 def _columns(conn, table):
@@ -77,6 +78,9 @@ def _latest_stage_documents(conn, limit):
 def _index_all(conn):
     total = {"added": 0, "updated": 0, "skipped": 0}
     for batch in _iter_semantic_documents(conn):
+        batch = filter_workset(batch)
+        if not batch:
+            continue
         result = index_documents(conn, batch)
         for key in total:
             total[key] += result.get(key, 0)
@@ -111,9 +115,10 @@ def main():
         from v7_research import run_research
         out = {"v7": run_research(c, a.question, a.limit)}
     elif a.mode == "autonomous":
+        latest = filter_workset(_latest_stage_documents(c, a.limit))
         out = {
             "v6": _index_all(c),
-            "v8": detect(c, _latest_stage_documents(c, a.limit), a.limit),
+            "v8": detect(c, latest, min(a.limit, len(latest)) if latest else a.limit),
             "v9": v9_process(c, a.limit),
         }
     else:
