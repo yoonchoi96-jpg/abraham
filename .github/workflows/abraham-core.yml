@@ -24,6 +24,8 @@ jobs:
   core:
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    env:
+      ABRAHAM_WORKSET_PATH: ${{ github.workspace }}/.abraham_workset.json
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -79,6 +81,18 @@ jobs:
           set -euo pipefail
           test -s data/readwise_pipeline.db
           gh release upload state-current data/readwise_pipeline.db --clobber
+
+      - name: Freeze 1000-document run workset
+        env:
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+        run: |
+          set -euo pipefail
+          PYTHONPATH="${GITHUB_WORKSPACE}" .venv/bin/python scripts/create_workset.py \
+            --db data/readwise_pipeline.db \
+            --limit 1000 \
+            --output "${ABRAHAM_WORKSET_PATH}"
+          test -s "${ABRAHAM_WORKSET_PATH}"
+          echo "Frozen workset is now authoritative for graph, core, V6-V9."
 
       - name: Consolidate and canonicalize Entity graph
         env:
