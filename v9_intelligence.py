@@ -40,6 +40,7 @@ def ensure_schema(c):
     CREATE TABLE IF NOT EXISTS v9_duel(duel_id TEXT PRIMARY KEY,readwise_id TEXT NOT NULL,analyst_a_json TEXT NOT NULL,analyst_b_json TEXT NOT NULL,disagreement_json TEXT NOT NULL,created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS v9_telemetry(run_id TEXT PRIMARY KEY,payload_json TEXT NOT NULL,created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS v9_memory(entity_key TEXT PRIMARY KEY,state TEXT NOT NULL,first_seen TEXT,last_seen TEXT,version INTEGER NOT NULL,payload_json TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS v9_stage_cache(readwise_id TEXT NOT NULL,stage TEXT NOT NULL,content_hash TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(readwise_id,stage));
     CREATE INDEX IF NOT EXISTS idx_v9_q_status ON v9_questions(status);
     CREATE INDEX IF NOT EXISTS idx_v9_conflicts_status ON v9_conflicts(status);
     """)
@@ -173,25 +174,36 @@ def telemetry(c,run_id,stats):
 
 def process(c,limit=250,run_id=None):
     ensure_schema(c); docs=_documents(c,limit)
-    stats={"documents":len(docs),"duplicates":0,"questions":0,"conflicts":0,"surprises":0,"blindspots":0,"source_profiles":0,"temporal_hints":0,"cross_domain":0}
+    stats={"documents":len(docs),"changed_documents":0,"duplicates":0,"questions":0,"conflicts":0,"surprises":0,"blindspots":0,"source_profiles":0,"temporal_hints":0,"cross_domain":0}
+    changed=[]
     for d in docs:
-        if not d.get("readwise_id"): continue
+        rid=str(d.get("readwise_id") or "").strip()
+        if not rid: continue
+        ch=digest(text(d))
+        row=c.execute("SELECT content_hash FROM v9_stage_cache WHERE readwise_id=? AND stage='v9_core'",(rid,)).fetchone()
+        if row and row[0]==ch:
+            continue
+        changed.append(d)
+        c.execute("INSERT OR REPLACE INTO v9_stage_cache VALUES(?,?,?,?)",(rid,"v9_core",ch,now()))
+    stats["changed_documents"]=len(changed)
+    for d in changed:
         if fingerprint(c,d): stats["duplicates"]+=1
         knowledge_delta(c,d)
         stats["questions"]+=len(question_generation(c,d))
+    # Global candidate scans are still deterministic/local; their writes are
+    # idempotent, while per-document intelligence above is hash-gated.
     stats["conflicts"]=len(contradiction_candidates(c,docs))
     sb=surprise_and_blindspots(c,docs); stats.update(sb)
     stats["source_profiles"]=source_profiles(c,docs)
-    stats["temporal_hints"]=temporal_hints(c,docs)
+    stats["temporal_hints"]=temporal_hints(c,changed)
     stats["cross_domain"]=cross_domain(c,docs)
-    # Minimal disagreement engine: two deterministic analyst views.
-    for d in docs[:min(100,len(docs))]:
+    for d in changed[:min(100,len(changed))]:
         ts=toks(text(d)); a={"terms":ts[:20],"length":len(ts)}
-        b={"terms":list(reversed(ts[-20:])),"length":len(ts)}
+        b={"terms":list(reversed(ts[-20:])), "length":len(ts)}
         dis=sorted(set(a["terms"])^set(b["terms"]))
         did=digest("duel",d["readwise_id"])[:32]
         c.execute("INSERT OR REPLACE INTO v9_duel VALUES(?,?,?,?,?,?)",(did,d["readwise_id"],js(a),js(b),js(dis),now()))
-    stats["duels"]=min(100,len(docs))
+    stats["duels"]=min(100,len(changed))
     rid=run_id or digest("v9run",now())[:24]; telemetry(c,rid,stats)
     c.commit()
     return stats
