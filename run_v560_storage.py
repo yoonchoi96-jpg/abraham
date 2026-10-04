@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import time
 import urllib.error
 import urllib.parse
@@ -22,10 +23,17 @@ from gemini_adapter import get_gemini_client
 from entity_classifier import classify_entity_batch
 from entity_relation_ai import extract_and_persist
 
-from abraham_sqlite import load_documents, load_documents_by_ids, connect as connect_db
+from abraham_sqlite import (
+    get_db_path,
+    load_documents,
+    load_documents_by_ids,
+    connect as connect_db,
+)
 from abraham_incremental import (
+    MAX_TRANSIENT_ATTEMPTS,
     ensure_schema,
     content_hash,
+    failure_category,
     select_pending_documents,
     mark_started,
     mark_completed,
@@ -1878,8 +1886,172 @@ def prepare_source_content(documents):
     return available, unavailable
 
 
+PIPELINE_STAGES = (
+    "rating",
+    "korean_translation",
+    "entity_relation_extraction",
+    "document_render",
+    "entity_render",
+)
 
-def classify_entities(registry, args):
+
+def pipeline_health_status(db_path=None, log_path=None):
+    """Read pipeline health without creating tables or modifying the database."""
+    db_path = Path(db_path or get_db_path()).expanduser()
+    log_path = Path(log_path or (LOG_DIR / "abraham.log")).expanduser()
+    result = {
+        "database": str(db_path),
+        "database_exists": db_path.is_file(),
+        "documents": {"total": 0, "pending": 0, "completed": 0, "failed": 0},
+        "stages": {},
+        "graph": {"entities": 0, "relations": 0, "document_entity_links": 0},
+        "cache": {"korean_translation": {"hits": 0, "total": 0, "hit_rate_pct": 0.0}},
+        "recent_failures": [],
+        "last_successful_run": None,
+        "max_transient_attempts": MAX_TRANSIENT_ATTEMPTS,
+    }
+    if not db_path.is_file():
+        return result
+
+    with sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
+        conn.row_factory = sqlite3.Row
+        tables = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+
+        document_ids = []
+        document_content = {}
+        if "documents" in tables:
+            columns = {
+                row["name"] for row in conn.execute('PRAGMA table_info("documents")')
+            }
+            id_column = "readwise_id" if "readwise_id" in columns else (
+                "id" if "id" in columns else None
+            )
+            if id_column:
+                content_column = '"content"' if "content" in columns else "''"
+                canonical_column = (
+                    '"canonical_text"' if "canonical_text" in columns else content_column
+                )
+                rows = conn.execute(
+                    f"""SELECT "{id_column}", {content_column}, {canonical_column}
+                        FROM documents WHERE "{id_column}" IS NOT NULL"""
+                ).fetchall()
+                document_ids = [str(row[0]) for row in rows]
+                document_content = {
+                    str(row[0]): (row[1] or "", row[2] or row[1] or "")
+                    for row in rows
+                }
+        result["documents"]["total"] = len(document_ids)
+
+        stage_rows = []
+        if "document_stages" in tables:
+            grouped = conn.execute(
+                """SELECT stage, status, COUNT(*) AS count,
+                          SUM(CASE WHEN status='transient_failed'
+                                    AND attempt_count < ? THEN 1 ELSE 0 END) AS retry_eligible,
+                          MAX(attempt_count) AS max_attempts
+                   FROM document_stages
+                   GROUP BY stage, status
+                   ORDER BY stage, status""",
+                (MAX_TRANSIENT_ATTEMPTS,),
+            ).fetchall()
+            for row in grouped:
+                stage = result["stages"].setdefault(row["stage"], {})
+                stage[row["status"]] = int(row["count"])
+                stage.setdefault("retry_eligible", 0)
+                stage["retry_eligible"] += int(row["retry_eligible"] or 0)
+                stage["max_attempts"] = max(
+                    stage.get("max_attempts", 0), int(row["max_attempts"] or 0)
+                )
+
+            stage_rows = conn.execute(
+                """SELECT readwise_id, stage, status, attempt_count, last_error,
+                          content_hash, updated_at
+                   FROM document_stages"""
+            ).fetchall()
+            by_document = {}
+            for row in stage_rows:
+                by_document.setdefault(str(row["readwise_id"]), []).append(row["status"])
+            for document_id in document_ids:
+                statuses = by_document.get(document_id, [])
+                if any(status in ("permanent_failed", "transient_failed") for status in statuses):
+                    result["documents"]["failed"] += 1
+                elif statuses and all(status == "completed" for status in statuses):
+                    result["documents"]["completed"] += 1
+                else:
+                    result["documents"]["pending"] += 1
+
+            korean_rows = [
+                row for row in stage_rows if row["stage"] == "korean_translation"
+            ]
+            hits = sum(
+                row["status"] == "completed"
+                and row["content_hash"] == content_hash(
+                    *document_content.get(str(row["readwise_id"]), ("", ""))
+                )
+                for row in korean_rows
+            )
+            total = len(korean_rows)
+            result["cache"]["korean_translation"] = {
+                "hits": hits,
+                "total": total,
+                "hit_rate_pct": round(hits * 100 / total, 2) if total else 0.0,
+            }
+            failures = sorted(
+                (
+                    row for row in stage_rows
+                    if row["status"] in ("permanent_failed", "transient_failed")
+                ),
+                key=lambda row: str(row["updated_at"] or ""),
+                reverse=True,
+            )[:20]
+            result["recent_failures"] = [
+                {
+                    "readwise_id": row["readwise_id"],
+                    "stage": row["stage"],
+                    "status": row["status"],
+                    "attempt_count": row["attempt_count"],
+                    "retry_eligible": (
+                        row["status"] == "transient_failed"
+                        and int(row["attempt_count"] or 0) < MAX_TRANSIENT_ATTEMPTS
+                    ),
+                    "category": failure_category(row["last_error"] or ""),
+                    "reason": row["last_error"],
+                    "updated_at": row["updated_at"],
+                }
+                for row in failures
+            ]
+
+        graph_tables = {
+            "entities": "entities",
+            "relations": "relations",
+            "document_entity_links": next(
+                (name for name in ("document_entities", "document_entity") if name in tables),
+                None,
+            ),
+        }
+        for key, table in graph_tables.items():
+            if table:
+                result["graph"][key] = int(
+                    conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+                )
+
+    if log_path.is_file():
+        with log_path.open("r", encoding="utf-8", errors="replace") as log:
+            for line in reversed(log.readlines()):
+                if line.startswith("SUCCESS "):
+                    result["last_successful_run"] = line[len("SUCCESS "):].split(
+                        " elapsed=", 1
+                    )[0].strip()
+                    break
+    return result
+
+
+def classify_entities(registry, args, allowed_entity_ids=None):
     if not registry or not args.apply:
         return {}, [], []
 
@@ -1887,7 +2059,8 @@ def classify_entities(registry, args):
     reclassify_all = os.getenv("ABRAHAM_RECLASSIFY_ENTITIES", "0") == "1"
     pending = [
         e for e in entities
-        if reclassify_all or str(e.get("entity_type") or "Other") == "Other"
+        if (allowed_entity_ids is None or str(e.get("entity_id") or "") in allowed_entity_ids)
+        and (reclassify_all or str(e.get("entity_type") or "Other") == "Other")
     ]
     if not pending:
         return {}, [], entities
@@ -1928,6 +2101,8 @@ def _entity_render_inputs(entity, entity_relation_links):
 
 
 def run_pipeline(args):
+    start_stage = args.from_stage if args.resume else PIPELINE_STAGES[0]
+    start_stage_index = PIPELINE_STAGES.index(start_stage)
     loaded = load_production_snapshot(args.readwise_id)
     if not isinstance(loaded, tuple) or len(loaded) != 2:
         raise RuntimeError("SQLite loader must return (documents, relations).")
@@ -1964,6 +2139,7 @@ def run_pipeline(args):
     # White/Red/unclassified never enter translation/render.
     documents = gated_documents
 
+    resume_scope_ids = None
     # ------------------------------------------------------------
     # 1-2. Independent AI stages.
     # Rating and Korean translation have no dependency on each other,
@@ -1973,14 +2149,22 @@ def run_pipeline(args):
     korean_stage = "korean_translation"
     with connect_db() as stage_conn:
         ensure_schema(stage_conn)
-        korean_pending, korean_skipped = select_pending_documents(
-            stage_conn,
-            documents,
-            korean_stage,
-            force_ids=args.readwise_id,
-        )
-        if args.limit is not None:
-            korean_pending = korean_pending[:args.limit]
+        if start_stage_index <= PIPELINE_STAGES.index(korean_stage):
+            korean_pending, korean_skipped = select_pending_documents(
+                stage_conn,
+                documents,
+                korean_stage,
+                force_ids=args.readwise_id,
+            )
+            if args.limit is not None:
+                korean_pending = korean_pending[:args.limit]
+            if args.resume and start_stage == korean_stage:
+                resume_scope_ids = {
+                    str(d.get("readwise_id") or d.get("document_id") or "")
+                    for d in korean_pending
+                }
+        else:
+            korean_pending, korean_skipped = [], documents
 
         print("=" * 70)
         print("V5.6 INCREMENTAL SELECTION")
@@ -2004,7 +2188,14 @@ def run_pipeline(args):
         and os.getenv("ABRAHAM_PARALLEL_AI", "1") == "1"
         and args.readwise_id is None
     )
-    if parallel_ai:
+    if start_stage_index > PIPELINE_STAGES.index("rating"):
+        rating_results, rating_pending, rating_skipped = {}, [], []
+        korean_results = translate_documents_to_korean(
+            korean_pending,
+            limit=None,
+            allow_ai=start_stage_index <= PIPELINE_STAGES.index("korean_translation"),
+        )
+    elif parallel_ai:
         workers = max(2, int(os.getenv("ABRAHAM_AI_MAX_WORKERS", "4")))
         print(f"[AI PARALLEL] enabled workers={workers} rating+translation")
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="abraham-ai") as pool:
@@ -2097,14 +2288,29 @@ def run_pipeline(args):
     graph_skipped = []
     with connect_db() as graph_conn:
         ensure_schema(graph_conn)
-        graph_pending, graph_skipped = select_pending_documents(
-            graph_conn,
-            documents,
-            graph_stage,
-            force_ids=args.readwise_id,
-        )
-        if args.limit is not None:
-            graph_pending = graph_pending[:args.limit]
+        if start_stage_index <= PIPELINE_STAGES.index(graph_stage):
+            graph_documents = documents
+            if resume_scope_ids is not None:
+                graph_documents = [
+                    d for d in documents
+                    if str(d.get("readwise_id") or d.get("document_id") or "")
+                    in resume_scope_ids
+                ]
+            graph_pending, graph_skipped = select_pending_documents(
+                graph_conn,
+                graph_documents,
+                graph_stage,
+                force_ids=args.readwise_id,
+            )
+            if args.limit is not None:
+                graph_pending = graph_pending[:args.limit]
+            if args.resume and start_stage == graph_stage:
+                resume_scope_ids = {
+                    str(d.get("readwise_id") or d.get("document_id") or "")
+                    for d in graph_pending
+                }
+        else:
+            graph_pending, graph_skipped = [], documents
         if args.apply and graph_pending:
             mark_started(
                 graph_conn,
@@ -2121,7 +2327,7 @@ def run_pipeline(args):
         "relations_created": 0,
         "processed_readwise_ids": [],
     }
-    if graph_pending:
+    if start_stage_index <= PIPELINE_STAGES.index(graph_stage) and graph_pending:
         graph_stats = extract_and_persist(
             graph_pending,
             apply=args.apply,
@@ -2184,7 +2390,26 @@ def run_pipeline(args):
     registry = build_entity_registry(documents)
     registry = build_entity_registry(documents)
 
-    entity_classification_results, entity_classification_pending, entity_classification_skipped = classify_entities(registry, args)
+    if start_stage_index <= PIPELINE_STAGES.index("entity_relation_extraction"):
+        allowed_entity_ids = None
+        if args.resume and resume_scope_ids is not None:
+            allowed_entity_ids = {
+                str(link.get("entity_id") or "")
+                for link in build_document_entity_links([
+                    d for d in documents
+                    if str(d.get("readwise_id") or d.get("document_id") or "")
+                    in resume_scope_ids
+                ])
+            }
+        entity_classification_results, entity_classification_pending, entity_classification_skipped = classify_entities(
+            registry,
+            args,
+            allowed_entity_ids=allowed_entity_ids,
+        )
+    else:
+        entity_classification_results = {}
+        entity_classification_pending = []
+        entity_classification_skipped = list(registry.values())
     if entity_classification_results:
         for document in documents:
             for entity in document.get("resolved_entities", []):
@@ -2246,13 +2471,29 @@ def run_pipeline(args):
     render_stage = "document_render"
     with connect_db() as stage_conn:
         ensure_schema(stage_conn)
-        render_pending, render_skipped = select_pending_documents(
-            stage_conn,
-            document_candidates,
-            render_stage,
-            force_ids=args.readwise_id,
-        )
-        if args.limit is not None:
+        if start_stage_index <= PIPELINE_STAGES.index(render_stage):
+            render_pending, render_skipped = select_pending_documents(
+                stage_conn,
+                document_candidates,
+                render_stage,
+                force_ids=args.readwise_id,
+            )
+        else:
+            render_pending, render_skipped = [], document_candidates
+        if args.resume:
+            if resume_scope_ids is not None:
+                render_pending = [
+                    d for d in render_pending
+                    if str(d.get("readwise_id") or d.get("document_id") or "")
+                    in resume_scope_ids
+                ]
+            elif args.limit is not None:
+                render_pending = render_pending[:args.limit]
+                resume_scope_ids = {
+                    str(d.get("readwise_id") or d.get("document_id") or "")
+                    for d in render_pending
+                }
+        elif args.limit is not None and start_stage_index <= PIPELINE_STAGES.index(render_stage):
             # Limit the render workload to the same user-selected working set.
             allowed = {d["document_id"] for d in korean_pending}
             if korean_pending:
@@ -2355,7 +2596,24 @@ def run_pipeline(args):
     entity_stage = "entity_render"
     with connect_db() as stage_conn:
         ensure_schema(stage_conn)
-        entity_pending, entity_skipped = select_pending_documents(stage_conn, entity_candidates, entity_stage)
+        if start_stage_index <= PIPELINE_STAGES.index(entity_stage):
+            entity_pending, entity_skipped = select_pending_documents(
+                stage_conn, entity_candidates, entity_stage
+            )
+            if args.resume and resume_scope_ids is not None:
+                scoped_entity_ids = {
+                    str(link.get("entity_id") or "")
+                    for link in document_entity_links
+                    if str(link.get("document_id") or "") in resume_scope_ids
+                }
+                entity_pending = [
+                    item for item in entity_pending
+                    if str(item.get("document_id") or "") in scoped_entity_ids
+                ]
+            elif args.resume and args.limit is not None:
+                entity_pending = entity_pending[:args.limit]
+        else:
+            entity_pending, entity_skipped = [], entity_candidates
         if args.apply and not args.skip_obsidian_apply and entity_pending:
             mark_started(stage_conn, entity_pending, entity_stage, worker_id="abraham-v5.6")
 
@@ -2497,10 +2755,18 @@ def main():
     parser.add_argument("--skip-obsidian-apply", action="store_true", help="Persist all core AI/graph results but defer document/entity Obsidian writes to the Mac worker.")
     parser.add_argument("--limit", type=int, default=None, help="Process only the first N documents after cache filtering.")
     parser.add_argument("--readwise-id", action="append", default=None, help="Process only specified Readwise IDs. Can be repeated.")
+    parser.add_argument("--status", action="store_true", help="Show read-only pipeline health and exit.")
+    parser.add_argument("--resume", action="store_true", help="Resume database-backed processing from a selected stage; Obsidian writes are deferred.")
+    parser.add_argument("--from-stage", choices=PIPELINE_STAGES, help="First pipeline stage to run with --resume.")
     parser.add_argument("--print-schedule", action="store_true", help="Print the configured KST schedule and exit.")
     parser.add_argument("--storage-status", action="store_true", help="Show Abraham storage usage and exit.")
     parser.add_argument("--storage-maintenance", action="store_true", help="Run safe storage maintenance: compress old backups, prune old logs/reports/backups, and enforce disk thresholds.")
     args = parser.parse_args()
+
+    if args.resume and not args.from_stage:
+        parser.error("--resume requires --from-stage")
+    if args.from_stage and not args.resume:
+        parser.error("--from-stage can only be used with --resume")
 
     print("=" * 70)
     print(f"Abraham V{VERSION} — Cloud-ready incremental pipeline")
@@ -2512,6 +2778,10 @@ def main():
         print("Configured runs:", ", ".join(x.strip() for x in ABRAHAM_SCHEDULE_KST.split(",") if x.strip()))
         return
 
+    if args.status:
+        print(json.dumps(pipeline_health_status(), ensure_ascii=False, indent=2))
+        return
+
     if args.storage_status:
         print(json.dumps(storage_status(), ensure_ascii=False, indent=2))
         return
@@ -2520,6 +2790,10 @@ def main():
         result = run_storage_maintenance(dry_run=not args.apply)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
+
+    if args.resume:
+        args.apply = True
+        args.skip_obsidian_apply = True
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / "abraham.log"

@@ -52,6 +52,16 @@ def _failure_status(error: Exception) -> str:
     )
     return "permanent_failed" if any(x in text for x in permanent_markers) else "transient_failed"
 
+def failure_category(error: Exception | str) -> str:
+    text = str(error).lower()
+    if any(marker in text for marker in ("content exists risk", "content_exists_risk")):
+        return "content_risk"
+    if any(marker in text for marker in ("429", "rate limit", "rate_limit", "too many requests")):
+        return "rate_limit"
+    if any(marker in text for marker in ("invalid", "malformed", "missing", "mismatch", "json")):
+        return "data"
+    return "api"
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(document_stages)").fetchall()}
@@ -145,6 +155,7 @@ def mark_failed(conn: sqlite3.Connection, documents: list[dict], stage: str, err
     now = utc_now()
     message = str(error)[:4000]
     status = _failure_status(error)
+    category = failure_category(error)
     for d in documents:
         rid = str(d.get('readwise_id') or d.get('document_id') or '').strip()
         conn.execute(
@@ -153,5 +164,23 @@ def mark_failed(conn: sqlite3.Connection, documents: list[dict], stage: str, err
                WHERE readwise_id=? AND stage=?''',
             (status, message, now, rid, stage),
         )
+        row = conn.execute(
+            '''SELECT attempt_count FROM document_stages
+               WHERE readwise_id=? AND stage=?''',
+            (rid, stage),
+        ).fetchone()
+        attempts = int(row["attempt_count"] or 0) if row else 0
+        print(json.dumps({
+            "event": "stage_failure",
+            "document_id": str(d.get("document_id") or rid),
+            "readwise_id": rid,
+            "stage": stage,
+            "error_type": type(error).__name__,
+            "category": category,
+            "reason": message,
+            "status": status,
+            "retry_eligible": (
+                status == "transient_failed" and attempts < MAX_TRANSIENT_ATTEMPTS
+            ),
+        }, ensure_ascii=False, sort_keys=True))
     conn.commit()
-    print(f"[STAGE FAILURE] stage={stage} status={status} documents={len(documents)}")
