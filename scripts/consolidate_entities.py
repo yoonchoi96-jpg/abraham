@@ -170,10 +170,17 @@ def main():
         for eid, mention in mentions:
             k = norm(mention)
             if k: alias_map.setdefault(k, set()).add(eid)
-        for ids in alias_map.values():
-            ids = [x for x in ids if x in byid]
+        typed_alias_map = {}
+        for eid, mention in mentions:
+            if eid not in byid:
+                continue
+            entity_type = str(byid[eid][2] or "Other")
+            k = norm(mention)
+            if k:
+                typed_alias_map.setdefault((k, entity_type), set()).add(eid)
+        for ids in typed_alias_map.values():
             if len(set(ids)) > 1:
-                merge_group(c, ids, byid, audit, "duplicate_mention")
+                merge_group(c, ids, byid, audit, "duplicate_mention_same_type")
                 merged += len(set(ids)) - 1
 
         active = c.execute(
