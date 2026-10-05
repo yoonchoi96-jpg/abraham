@@ -52,6 +52,16 @@ def _failure_status(error: Exception) -> str:
     )
     return "permanent_failed" if any(x in text for x in permanent_markers) else "transient_failed"
 
+def failure_category(error: Exception | str) -> str:
+    text = str(error).lower()
+    if any(marker in text for marker in ("content exists risk", "content_exists_risk")):
+        return "content_risk"
+    if any(marker in text for marker in ("429", "rate limit", "rate_limit", "too many requests")):
+        return "rate_limit"
+    if any(marker in text for marker in ("invalid", "malformed", "missing", "mismatch", "json")):
+        return "data"
+    return "api"
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(document_stages)").fetchall()}
@@ -77,20 +87,34 @@ def get_stage_rows(conn: sqlite3.Connection, readwise_ids: Iterable[str], stage:
     ids = [str(x) for x in readwise_ids if str(x).strip()]
     if not ids:
         return {}
-    placeholders = ','.join('?' for _ in ids)
-    rows = conn.execute(
-        f'''SELECT * FROM document_stages
-            WHERE stage = ? AND readwise_id IN ({placeholders})''',
-        (stage, *ids),
-    ).fetchall()
-    return {str(row['readwise_id']): row for row in rows}
+    result = {}
+    for start in range(0, len(ids), 900):
+        chunk = ids[start:start + 900]
+        placeholders = ','.join('?' for _ in chunk)
+        rows = conn.execute(
+            f'''SELECT * FROM document_stages
+                WHERE stage = ? AND readwise_id IN ({placeholders})''',
+            (stage, *chunk),
+        ).fetchall()
+        result.update({str(row['readwise_id']): row for row in rows})
+    return result
 
-def select_pending_documents(conn: sqlite3.Connection, documents: list[dict], stage: str, *, force_ids: Iterable[str] | None = None) -> tuple[list[dict], list[dict]]:
+def select_pending_documents(
+    conn: sqlite3.Connection,
+    documents: list[dict],
+    stage: str,
+    *,
+    force_ids: Iterable[str] | None = None,
+    retry_ids: Iterable[str] | None = None,
+    ensure_rows: bool = True,
+) -> tuple[list[dict], list[dict]]:
     """Return (pending, skipped), suppressing permanent failures and exhausted transient failures."""
     ids = [str(d.get('readwise_id') or d.get('document_id') or '').strip() for d in documents]
-    ensure_stage_rows(conn, ids, stage)
+    if ensure_rows:
+        ensure_stage_rows(conn, ids, stage)
     rows = get_stage_rows(conn, ids, stage)
     forced = {str(x).strip() for x in (force_ids or [])}
+    retries = {str(x).strip() for x in (retry_ids or [])}
     pending, skipped = [], []
     for document in documents:
         rid = str(document.get('readwise_id') or document.get('document_id') or '').strip()
@@ -101,7 +125,7 @@ def select_pending_documents(conn: sqlite3.Connection, documents: list[dict], st
         done = row is not None and status == 'completed' and row['content_hash'] == current_hash and rid not in forced
         failure_hash_matches = row is not None and row['content_hash'] == current_hash
         exhausted = (
-            rid not in forced and failure_hash_matches and
+            rid not in forced and rid not in retries and failure_hash_matches and
             (status == 'permanent_failed' or (status == 'transient_failed' and attempts >= MAX_TRANSIENT_ATTEMPTS))
         )
         document['_stage_content_hash'] = current_hash
@@ -145,6 +169,7 @@ def mark_failed(conn: sqlite3.Connection, documents: list[dict], stage: str, err
     now = utc_now()
     message = str(error)[:4000]
     status = _failure_status(error)
+    category = failure_category(error)
     for d in documents:
         rid = str(d.get('readwise_id') or d.get('document_id') or '').strip()
         conn.execute(
@@ -153,5 +178,23 @@ def mark_failed(conn: sqlite3.Connection, documents: list[dict], stage: str, err
                WHERE readwise_id=? AND stage=?''',
             (status, message, now, rid, stage),
         )
+        row = conn.execute(
+            '''SELECT attempt_count FROM document_stages
+               WHERE readwise_id=? AND stage=?''',
+            (rid, stage),
+        ).fetchone()
+        attempts = int(row["attempt_count"] or 0) if row else 0
+        print(json.dumps({
+            "event": "stage_failure",
+            "document_id": str(d.get("document_id") or rid),
+            "readwise_id": rid,
+            "stage": stage,
+            "error_type": type(error).__name__,
+            "category": category,
+            "reason": message,
+            "status": status,
+            "retry_eligible": (
+                status == "transient_failed" and attempts < MAX_TRANSIENT_ATTEMPTS
+            ),
+        }, ensure_ascii=False, sort_keys=True))
     conn.commit()
-    print(f"[STAGE FAILURE] stage={stage} status={status} documents={len(documents)}")
