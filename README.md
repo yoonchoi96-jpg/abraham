@@ -23,6 +23,8 @@ SQLite is the canonical pipeline state and source snapshot. Rendered Markdown is
 
 document_stages tracks stage status, attempts, content hashes, result hashes, errors, and worker IDs. Unchanged completed documents are skipped; changed content is reprocessed. Explicit --readwise-id runs bypass the skip decision for targeted reruns.
 
+Use `python run_v560_storage.py --status` for read-only pipeline health, including stale running checkpoints (24 hours by default; configure with `ABRAHAM_STALE_STAGE_MINUTES`). Resume a bounded stage with `python run_v560_storage.py --resume --from-stage korean_translation --limit 100`. Resume persists database results but defers Obsidian writes; `--readwise-id ID` can target a specific document.
+
 ## Safety
 
 - Dry-run is the default.

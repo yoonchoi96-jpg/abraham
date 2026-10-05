@@ -15,7 +15,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from deepseek_adapter import get_deepseek_client
@@ -1893,6 +1893,7 @@ PIPELINE_STAGES = (
     "document_render",
     "entity_render",
 )
+STALE_STAGE_MINUTES = max(1, int(os.getenv("ABRAHAM_STALE_STAGE_MINUTES", "1440")))
 
 
 def pipeline_health_status(db_path=None, log_path=None):
@@ -1907,6 +1908,8 @@ def pipeline_health_status(db_path=None, log_path=None):
         "graph": {"entities": 0, "relations": 0, "document_entity_links": 0},
         "cache": {"korean_translation": {"hits": 0, "total": 0, "hit_rate_pct": 0.0}},
         "recent_failures": [],
+        "stale_stages": [],
+        "stale_stage_minutes": STALE_STAGE_MINUTES,
         "last_successful_run": None,
         "max_transient_attempts": MAX_TRANSIENT_ATTEMPTS,
     }
@@ -1970,7 +1973,7 @@ def pipeline_health_status(db_path=None, log_path=None):
 
             stage_rows = conn.execute(
                 """SELECT readwise_id, stage, status, attempt_count, last_error,
-                          content_hash, updated_at
+                          content_hash, started_at, updated_at
                    FROM document_stages"""
             ).fetchall()
             by_document = {}
@@ -2025,6 +2028,29 @@ def pipeline_health_status(db_path=None, log_path=None):
                 }
                 for row in failures
             ]
+            now = datetime.now(timezone.utc)
+            stale_cutoff = now - timedelta(minutes=STALE_STAGE_MINUTES)
+            for row in stage_rows:
+                if row["status"] != "running" or not row["started_at"]:
+                    continue
+                try:
+                    started_at = datetime.fromisoformat(
+                        str(row["started_at"]).replace("Z", "+00:00")
+                    )
+                    if started_at.tzinfo is None:
+                        started_at = started_at.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    continue
+                if started_at < stale_cutoff:
+                    result["stale_stages"].append({
+                        "readwise_id": row["readwise_id"],
+                        "stage": row["stage"],
+                        "started_at": row["started_at"],
+                        "age_minutes": int((now - started_at).total_seconds() // 60),
+                    })
+            result["stale_stages"].sort(
+                key=lambda row: row["age_minutes"], reverse=True
+            )
 
         graph_tables = {
             "entities": "entities",

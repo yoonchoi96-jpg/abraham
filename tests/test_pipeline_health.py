@@ -43,6 +43,12 @@ def _database(path):
            VALUES ('r2', 'korean_translation', 'transient_failed', 1,
                    'HTTP 429 rate limit', '2026-10-04T14:30:00')"""
     )
+    conn.execute(
+        """INSERT INTO document_stages
+           (readwise_id, stage, status, attempt_count, started_at, updated_at)
+           VALUES ('r2', 'entity_relation_extraction', 'running', 1,
+                   '2000-01-01T00:00:00+00:00', '2000-01-01T00:00:00+00:00')"""
+    )
     conn.commit()
     conn.close()
 
@@ -73,6 +79,8 @@ def test_pipeline_health_reports_database_state_without_mutation(tmp_path):
         "document_entity_links": 1,
     }
     assert status["recent_failures"][0]["category"] == "rate_limit"
+    assert status["stale_stages"][0]["stage"] == "entity_relation_extraction"
+    assert status["stages"]["entity_relation_extraction"]["running"] == 1
     assert status["last_successful_run"] == "2026-10-04T14:10:00"
     assert db_path.stat().st_mtime_ns == before
 
