@@ -136,11 +136,11 @@ def main():
     c.execute("PRAGMA foreign_keys=OFF")
     try:
         ensure(c)
-        if not args.force and c.execute(
+        completed = c.execute(
             "SELECT 1 FROM entity_consolidation_runs WHERE migration_id=?", (MIGRATION,)
-        ).fetchone():
-            print("ENTITY_CONSOLIDATION_ALREADY_COMPLETED")
-            return
+        ).fetchone()
+        if completed:
+            print("ENTITY_CONSOLIDATION_INCREMENTAL")
 
         rows = c.execute(
             "SELECT entity_id,canonical_name,entity_type,created_at,status FROM entities "
@@ -242,7 +242,10 @@ def main():
             )
         c.execute(
             "INSERT INTO entity_consolidation_runs(migration_id,completed_at,scanned,merged,rejected,ai_names) "
-            "VALUES(?,?,?,?,?,?)",
+            "VALUES(?,?,?,?,?,?) "
+            "ON CONFLICT(migration_id) DO UPDATE SET "
+            "completed_at=excluded.completed_at, scanned=excluded.scanned, "
+            "merged=excluded.merged, rejected=excluded.rejected, ai_names=excluded.ai_names",
             (MIGRATION, now(), len(rows), merged, rejected, len(mapped))
         )
         c.commit()
