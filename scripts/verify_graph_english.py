@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sqlite3
 import unicodedata
 from pathlib import Path
@@ -12,6 +13,14 @@ def is_latin(text):
         if ch.isalpha() and "LATIN" not in unicodedata.name(ch, ""):
             return False
     return bool(str(text or "").strip())
+
+
+def norm(s):
+    s = str(s or "").strip().casefold()
+    s = re.sub(r"[\u200b\u200c\u200d]", "", s)
+    s = re.sub(r"[\s\-_–—]+", " ", s)
+    s = re.sub(r"[^\w\s&.+#]", "", s, flags=re.UNICODE)
+    return s.strip()
 
 
 def q(conn, sql):
@@ -40,10 +49,10 @@ def main():
         ]
         duplicate_entities = q(con, """
             SELECT COUNT(*) FROM (
-              SELECT lower(trim(canonical_name))
+              SELECT lower(trim(canonical_name)), COALESCE(entity_type,'Other')
               FROM entities
               WHERE COALESCE(status,'active') NOT IN ('deleted','rejected','merged')
-              GROUP BY lower(trim(canonical_name))
+              GROUP BY lower(trim(canonical_name)), COALESCE(entity_type,'Other')
               HAVING COUNT(*)>1
             )
         """)
