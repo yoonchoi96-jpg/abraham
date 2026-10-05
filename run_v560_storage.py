@@ -1917,6 +1917,11 @@ PIPELINE_STAGES = (
     "document_render",
     "entity_render",
 )
+DOCUMENT_COMPLETION_STAGES = (
+    "korean_translation",
+    "entity_relation_extraction",
+    "document_render",
+)
 STALE_STAGE_MINUTES = max(1, int(os.getenv("ABRAHAM_STALE_STAGE_MINUTES", "1440")))
 
 
@@ -1937,6 +1942,14 @@ def _entity_ids_for_documents(document_entity_links, document_ids):
         for link in document_entity_links
         if str(link.get("document_id") or "") in selected_documents
     }
+
+
+def _entity_candidates_for_documents(entity_candidates, document_entity_links, document_ids):
+    entity_ids = _entity_ids_for_documents(document_entity_links, document_ids)
+    return [
+        item for item in entity_candidates
+        if str(item.get("document_id") or "") in entity_ids
+    ]
 
 
 def _select_resume_workset(conn, documents, stage, limit, retry_ids=None):
@@ -2032,12 +2045,20 @@ def pipeline_health_status(db_path=None, log_path=None):
             ).fetchall()
             by_document = {}
             for row in stage_rows:
-                by_document.setdefault(str(row["readwise_id"]), []).append(row["status"])
+                by_document.setdefault(str(row["readwise_id"]), {})[
+                    str(row["stage"])
+                ] = str(row["status"])
             for document_id in document_ids:
-                statuses = by_document.get(document_id, [])
-                if any(status in ("permanent_failed", "transient_failed") for status in statuses):
+                statuses = by_document.get(document_id, {})
+                if any(
+                    status in ("permanent_failed", "transient_failed")
+                    for status in statuses.values()
+                ):
                     result["documents"]["failed"] += 1
-                elif statuses and all(status == "completed" for status in statuses):
+                elif all(
+                    statuses.get(stage) == "completed"
+                    for stage in DOCUMENT_COMPLETION_STAGES
+                ):
                     result["documents"]["completed"] += 1
                 else:
                     result["documents"]["pending"] += 1
@@ -2758,19 +2779,19 @@ def run_pipeline(args):
                 entity_scope_ids = _entity_ids_for_documents(
                     document_entity_links, resume_scope_ids
                 )
-                entity_documents = [
-                    item for item in entity_candidates
-                    if str(item.get("document_id") or "") in entity_scope_ids
-                ]
+                entity_documents = _entity_candidates_for_documents(
+                    entity_candidates, document_entity_links, resume_scope_ids
+                )
             elif args.resume and args.readwise_id:
                 entity_scope_ids = _entity_ids_for_documents(
                     document_entity_links,
                     [doc.get("document_id") for doc in documents],
                 )
-                entity_documents = [
-                    item for item in entity_candidates
-                    if str(item.get("document_id") or "") in entity_scope_ids
-                ]
+                entity_documents = _entity_candidates_for_documents(
+                    entity_candidates,
+                    document_entity_links,
+                    [doc.get("document_id") for doc in documents],
+                )
             if args.resume:
                 entity_pending, entity_skipped = _select_resume_workset(
                     stage_conn,
