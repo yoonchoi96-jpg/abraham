@@ -87,6 +87,18 @@ def ensure_graph_schema(conn: sqlite3.Connection) -> None:
         ON relations(subject_entity_id);
     CREATE INDEX IF NOT EXISTS idx_relations_object
         ON relations(object_entity_id);
+    CREATE TABLE IF NOT EXISTS relation_evidence (
+        evidence_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        relation_id INTEGER NOT NULL,
+        readwise_id TEXT NOT NULL,
+        confidence REAL,
+        evidence_quote TEXT,
+        evidence_start_hint TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(relation_id, readwise_id, evidence_quote)
+    );
+    CREATE INDEX IF NOT EXISTS idx_relation_evidence_relation
+        ON relation_evidence(relation_id);
     """)
     conn.commit()
 
@@ -401,6 +413,26 @@ def _relation_exists(conn, readwise_id: str, subject_id: str, relation: str, obj
     ).fetchone() is not None
 
 
+def _find_existing_relation(conn, subject_id: str, relation: str, object_id: str):
+    return conn.execute(
+        "SELECT relation_id, confidence FROM relations "
+        "WHERE subject_entity_id=? AND relation_type=? AND object_entity_id=? "
+        "AND COALESCE(status,'validated') NOT IN ('deleted','rejected') "
+        "ORDER BY relation_id LIMIT 1",
+        (subject_id, relation, object_id),
+    ).fetchone()
+
+
+def _insert_relation_evidence(conn, relation_id: int, readwise_id: str,
+                              confidence: float, evidence: str, hint: str) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO relation_evidence "
+        "(relation_id,readwise_id,confidence,evidence_quote,evidence_start_hint,created_at) "
+        "VALUES (?,?,?,?,?,?)",
+        (relation_id, str(readwise_id), confidence, evidence, hint, _now()),
+    )
+
+
 def _insert_relation(conn, readwise_id: str, subject: dict, relation: dict, object_: dict) -> bool:
     cols = _columns(conn, "relations")
     if not {"subject_entity_id", "relation_type", "object_entity_id"}.issubset(cols):
@@ -410,13 +442,22 @@ def _insert_relation(conn, readwise_id: str, subject: dict, relation: dict, obje
     if confidence < float(os.getenv("ABRAHAM_MIN_RELATION_CONFIDENCE", str(MIN_RELATION_CONFIDENCE))):
         return False
 
-    relation_name = str(relation.get("relation") or "").strip()[:160]
+    relation_name = _canonical_relation(relation.get("relation"))[:160]
     evidence = str(relation.get("evidence_quote") or "").strip()[:1200]
-    if not relation_name or not evidence:
+    hint = str(relation.get("evidence_start_hint") or "").strip()[:500]
+    if not relation_name or not evidence or subject["entity_id"] == object_["entity_id"]:
         return False
-    if subject["entity_id"] == object_["entity_id"]:
-        return False
-    if _relation_exists(conn, readwise_id, subject["entity_id"], relation_name, object_["entity_id"]):
+
+    existing = _find_existing_relation(
+        conn, subject["entity_id"], relation_name, object_["entity_id"]
+    )
+    if existing:
+        relation_id, _old_confidence = existing
+        conn.execute(
+            "UPDATE relations SET confidence=MAX(COALESCE(confidence,0), ?) WHERE relation_id=?",
+            (confidence, relation_id),
+        )
+        _insert_relation_evidence(conn, relation_id, readwise_id, confidence, evidence, hint)
         return False
 
     readwise_col = _pick_column(cols, ("readwise_id", "document_id"))
@@ -427,7 +468,7 @@ def _insert_relation(conn, readwise_id: str, subject: dict, relation: dict, obje
         "object_entity_id": object_["entity_id"],
         "confidence": confidence,
         "evidence_quote": evidence,
-        "evidence_start_hint": str(relation.get("evidence_start_hint") or "")[:500],
+        "evidence_start_hint": hint,
         "status": "validated",
         "created_at": _now(),
     }
@@ -439,6 +480,8 @@ def _insert_relation(conn, readwise_id: str, subject: dict, relation: dict, obje
         f'INSERT INTO relations ({",".join(names)}) VALUES ({",".join("?" for _ in names)})',
         tuple(usable[n] for n in names),
     )
+    relation_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    _insert_relation_evidence(conn, relation_id, readwise_id, confidence, evidence, hint)
     return True
 
 
