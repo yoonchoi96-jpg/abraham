@@ -42,7 +42,7 @@ def test_deepseek_primary_does_not_call_gemini(monkeypatch):
 
 
 def test_deepseek_failure_uses_gemini_fallback(monkeypatch):
-    primary = _Client(error=RuntimeError("DeepSeek unavailable"))
+    primary = _Client(error=RuntimeError("DeepSeek HTTP 503: unavailable"))
     fallback = _Client(response=type("Response", (), {"text": '{"fallback": true}'})())
     monkeypatch.setattr(provider_router, "get_deepseek_client", lambda: primary)
     monkeypatch.setattr(provider_router, "get_gemini_client", lambda: fallback)
