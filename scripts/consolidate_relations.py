@@ -69,6 +69,10 @@ def consolidate(conn: sqlite3.Connection) -> dict:
             survivor = rid
         else:
             conn.execute(
+                "UPDATE relations SET confidence=MAX(COALESCE(confidence,0), ?) WHERE relation_id=?",
+                (confidence, survivor),
+            )
+            conn.execute(
                 "UPDATE relation_canonicalization_audit SET survivor_id=? "
                 "WHERE migration_id=? AND relation_id=?",
                 (survivor, MIGRATION_ID, rid),
