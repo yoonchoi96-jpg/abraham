@@ -41,6 +41,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 def consolidate(conn: sqlite3.Connection) -> dict:
     ensure_schema(conn)
+    conn.execute("BEGIN")
     rows = conn.execute(
         "SELECT relation_id,readwise_id,subject_entity_id,relation_type,"
         "object_entity_id,confidence,evidence_quote,evidence_start_hint,created_at "
@@ -69,7 +70,7 @@ def consolidate(conn: sqlite3.Connection) -> dict:
             survivor = rid
         else:
             conn.execute(
-                "UPDATE relations SET confidence=MAX(COALESCE(confidence,0), ?) WHERE relation_id=?",
+                "UPDATE relations SET confidence=MAX(COALESCE(confidence,0), COALESCE(?,0)) WHERE relation_id=?",
                 (confidence, survivor),
             )
             conn.execute(
