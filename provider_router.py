@@ -1,17 +1,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
 
 from deepseek_adapter import get_deepseek_client
 from gemini_adapter import get_gemini_client
-
-
-@dataclass
-class RoutedResponse:
-    text: str
 
 
 class _Models:
