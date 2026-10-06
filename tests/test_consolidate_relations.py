@@ -36,11 +36,16 @@ def test_consolidate_relations_normalizes_and_deduplicates(tmp_path):
         "INSERT INTO relations(readwise_id,subject_entity_id,relation_type,object_entity_id,confidence,evidence_quote,created_at) "
         "VALUES ('rw-2','a','acquired','b',0.9,'A acquired B.','now')"
     )
+    conn.execute(
+        "INSERT INTO relations(readwise_id,subject_entity_id,relation_type,object_entity_id,confidence,evidence_quote,created_at) "
+        "VALUES ('rw-3','a','acquired','b',NULL,'A later acquired B.','now')"
+    )
     result = consolidate(conn)
-    assert result["scanned"] == 2
+    assert result["scanned"] == 3
     assert result["normalized"] == 1
-    assert result["merged"] == 1
+    assert result["merged"] == 2
     assert conn.execute("SELECT COUNT(*) FROM relations").fetchone()[0] == 1
     assert conn.execute("SELECT relation_type FROM relations").fetchone()[0] == "acquired"
-    assert conn.execute("SELECT COUNT(*) FROM relation_evidence").fetchone()[0] == 2
+    assert conn.execute("SELECT confidence FROM relations").fetchone()[0] == 0.9
+    assert conn.execute("SELECT COUNT(*) FROM relation_evidence").fetchone()[0] == 3
     conn.close()
