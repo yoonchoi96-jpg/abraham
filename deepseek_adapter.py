@@ -5,6 +5,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from dataclasses import dataclass
 
 
@@ -28,6 +29,29 @@ class DeepSeekClient:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.models = _Models(self)
+
+    def _record_usage(self, model: str, usage: dict) -> None:
+        if not usage:
+            return
+        path = os.getenv("ABRAHAM_AI_USAGE_LOG")
+        if not path:
+            return
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "provider": "deepseek",
+            "model": model,
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "reasoning_tokens": usage.get("reasoning_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+        }
+        try:
+            target = os.path.abspath(path)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            print(f"[AI USAGE LOG FAILED] deepseek: {exc}")
 
     def generate_content(self, *, model: str, contents: str, config: dict):
         payload = {
@@ -98,6 +122,7 @@ class DeepSeekClient:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
                     data = json.loads(response.read().decode("utf-8"))
                 content = data["choices"][0]["message"]["content"]
+                self._record_usage(model, data.get("usage") or {})
                 if not isinstance(content, str) or not content.strip():
                     raise RuntimeError("DeepSeek returned empty content")
                 return DeepSeekResponse(text=content)

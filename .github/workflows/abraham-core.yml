@@ -137,9 +137,13 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           MODEL: deepseek-flash
           GEMINI_RATING_MODEL: gemini-3.8-flash
+          GEMINI_RATING_FALLBACK_MODEL: gemini-3.8-flash
           DEEPSEEK_THINKING: disabled
           DEEPSEEK_MAX_TOKENS: "32768"
           DEEPSEEK_MAX_RETRIES: "4"
+          DEEPSEEK_RATING_MODEL: deepseek-flash
+          DEEPSEEK_RATING_THINKING: disabled
+          DEEPSEEK_RATING_MAX_TOKENS: "8192"
           KOREAN_BATCH_SIZE: "80"
           ABRAHAM_KOREAN_TARGET_CHARS: "40000"
           ABRAHAM_KOREAN_MIN_BATCH: "4"
@@ -150,8 +154,12 @@ jobs:
           ABRAHAM_TRANSLATION_THINKING: disabled
           ABRAHAM_TRANSLATION_MAX_TOKENS: "32768"
           ABRAHAM_RATING_THINKING: low
-          ABRAHAM_RATING_MAX_TOKENS: "16384"
+          ABRAHAM_RATING_MAX_TOKENS: "8192"
           ENTITY_RELATION_BATCH_SIZE: "20"
+          DEEPSEEK_ENTITY_RELATION_MODEL: deepseek-flash
+          DEEPSEEK_ENTITY_RELATION_THINKING: disabled
+          DEEPSEEK_ENTITY_RELATION_MAX_TOKENS: "8192"
+          GEMINI_ENTITY_RELATION_FALLBACK_MODEL: gemini-3.8-flash
           ENTITY_CLASSIFICATION_BATCH_SIZE: "25"
           ABRAHAM_ENTITY_CLASSIFICATION_PROVIDER: "deepseek"
           ABRAHAM_ENTITY_CLASSIFICATION_THINKING: "disabled"
@@ -169,6 +177,7 @@ jobs:
           ABRAHAM_BATCH_LIMIT: "1000"
           ABRAHAM_VAULT_PATH: ${{ github.workspace }}/vault
           ABRAHAM_OBSIDIAN_SYNC_PATH: ""
+          ABRAHAM_AI_USAGE_LOG: ${{ github.workspace }}/90_Dashboard/auto_reports/ai_usage.jsonl
           PYTHONUNBUFFERED: "1"
         run: |
           set -euo pipefail

@@ -20,6 +20,7 @@ from pathlib import Path
 
 from deepseek_adapter import get_deepseek_client
 from gemini_adapter import get_gemini_client
+from provider_router import get_rating_client
 from entity_classifier import classify_entity_batch
 from entity_relation_ai import extract_and_persist
 
@@ -624,12 +625,15 @@ def _validate_rating(item, expected_id):
 
 def _rate_batch(client, documents):
     response=client.models.generate_content(
-        model=os.getenv("GEMINI_RATING_MODEL", "gemini-3.8-flash"),
+        model=os.getenv(
+            "DEEPSEEK_RATING_MODEL",
+            os.getenv("MODEL", "deepseek-flash"),
+        ),
         contents=_build_rating_prompt(documents),
         config={
             "response_mime_type": "application/json",
-            "thinking": os.getenv("ABRAHAM_RATING_THINKING", "disabled"),
-            "max_output_tokens": int(os.getenv("ABRAHAM_RATING_MAX_TOKENS", "16384")),
+            "thinking": os.getenv("DEEPSEEK_RATING_THINKING", "disabled"),
+            "max_output_tokens": int(os.getenv("DEEPSEEK_RATING_MAX_TOKENS", "8192")),
         },
     )
     data=json.loads(response.text.strip().strip("`").replace("json\n","",1))
@@ -771,7 +775,7 @@ def rate_documents(documents, args, *, allowed_ids=None):
     if not pending: return {},pending,skipped
     if not args.apply: return {},pending,skipped
 
-    client=get_gemini_client(); results={}
+    client=get_rating_client(); results={}
     for start in range(0,len(pending),KOREAN_BATCH_SIZE):
         batch=pending[start:start+KOREAN_BATCH_SIZE]
         rated, failed = _rate_batch_resilient(client,batch)
