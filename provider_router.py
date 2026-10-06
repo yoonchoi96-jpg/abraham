@@ -25,6 +25,20 @@ class DeepSeekPrimaryWithGeminiFallback:
         self.fallback = get_gemini_client()
         self.models = _Models(self)
 
+    @staticmethod
+    def _is_provider_failure(exc: Exception) -> bool:
+        """Only provider/network failures may spend a Gemini fallback call.
+
+        Application/configuration/validation errors must propagate instead of
+        silently escalating to the more expensive fallback provider.
+        """
+        message = str(exc).lower()
+        if not isinstance(exc, (RuntimeError, TimeoutError)):
+            return False
+        if "deepseek http " in message:
+            return any(code in message for code in ("429", "500", "502", "503", "504"))
+        return "deepseek request failed" in message or "timed out" in message
+
     def generate_content(self, *, model: str, contents: str, config: dict | None = None):
         config = dict(config or {})
         try:
@@ -32,6 +46,8 @@ class DeepSeekPrimaryWithGeminiFallback:
                 model=model, contents=contents, config=config
             )
         except Exception as primary_error:
+            if not self._is_provider_failure(primary_error):
+                raise
             fallback_model = os.getenv(
                 f"GEMINI_{self.task.upper()}_FALLBACK_MODEL",
                 os.getenv("GEMINI_RATING_MODEL", "gemini-3.8-flash"),
