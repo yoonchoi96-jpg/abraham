@@ -42,7 +42,7 @@ def test_deepseek_primary_does_not_call_gemini(monkeypatch):
 
 
 def test_deepseek_failure_uses_gemini_fallback(monkeypatch):
-    primary = _Client(error=RuntimeError("DeepSeek unavailable"))
+    primary = _Client(error=RuntimeError("DeepSeek HTTP 503: unavailable"))
     fallback = _Client(response=type("Response", (), {"text": '{"fallback": true}'})())
     monkeypatch.setattr(provider_router, "get_deepseek_client", lambda: primary)
     monkeypatch.setattr(provider_router, "get_gemini_client", lambda: fallback)
@@ -61,7 +61,7 @@ def test_deepseek_failure_uses_gemini_fallback(monkeypatch):
 
 
 def test_both_providers_fail(monkeypatch):
-    primary = _Client(error=RuntimeError("DeepSeek unavailable"))
+    primary = _Client(error=RuntimeError("DeepSeek HTTP 503: unavailable"))
     fallback = _Client(error=RuntimeError("Gemini unavailable"))
     monkeypatch.setattr(provider_router, "get_deepseek_client", lambda: primary)
     monkeypatch.setattr(provider_router, "get_gemini_client", lambda: fallback)
@@ -73,3 +73,37 @@ def test_both_providers_fail(monkeypatch):
             contents="test",
             config={},
         )
+
+
+def test_application_error_does_not_spend_gemini(monkeypatch):
+    primary = _Client(error=ValueError("invalid rating payload"))
+    fallback = _Client(response=type("Response", (), {"text": '{"fallback": true}'})())
+    monkeypatch.setattr(provider_router, "get_deepseek_client", lambda: primary)
+    monkeypatch.setattr(provider_router, "get_gemini_client", lambda: fallback)
+
+    client = provider_router.get_rating_client()
+    with pytest.raises(ValueError, match="invalid rating payload"):
+        client.models.generate_content(
+            model="deepseek-flash",
+            contents="test",
+            config={},
+        )
+
+    assert fallback.models.calls == []
+
+
+def test_provider_http_failure_uses_gemini(monkeypatch):
+    primary = _Client(error=RuntimeError("DeepSeek HTTP 503: unavailable"))
+    fallback = _Client(response=type("Response", (), {"text": '{"fallback": true}'})())
+    monkeypatch.setattr(provider_router, "get_deepseek_client", lambda: primary)
+    monkeypatch.setattr(provider_router, "get_gemini_client", lambda: fallback)
+
+    client = provider_router.get_rating_client()
+    response = client.models.generate_content(
+        model="deepseek-flash",
+        contents="test",
+        config={},
+    )
+
+    assert response.text == '{"fallback": true}'
+    assert len(fallback.models.calls) == 1
