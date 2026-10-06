@@ -20,6 +20,38 @@ DEFAULT_BATCH = 20
 MAX_ENTITIES_PER_DOC = 8
 MAX_RELATIONS_PER_DOC = 25
 MIN_RELATION_CONFIDENCE = 0.80
+RELATION_ALIASES = {
+    "bought": "acquired",
+    "buy": "acquired",
+    "purchased": "acquired",
+    "purchase": "acquired",
+    "took over": "acquired",
+    "acquisition": "acquired",
+    "acquisition of": "acquired",
+    "co founded": "co_founded",
+    "co-founded": "co_founded",
+    "headquartered at": "headquartered_in",
+    "headquartered in": "headquartered_in",
+    "located at": "located_in",
+    "located in": "located_in",
+    "based in": "headquartered_in",
+    "worked for": "employed_by",
+    "works for": "employed_by",
+    "employed at": "employed_by",
+    "partnered with": "partnered_with",
+    "partners with": "partnered_with",
+    "collaborated with": "partnered_with",
+    "collaborates with": "partnered_with",
+    "competed with": "competes_with",
+    "competes against": "competes_with",
+}
+
+
+def _canonical_relation(value: str) -> str:
+    clean = str(value or "").strip().casefold()
+    clean = re.sub(r"[\s\-–—]+", " ", clean).replace("_", " ")
+    return RELATION_ALIASES.get(clean, clean.replace(" ", "_"))
+
 
 
 def _now() -> str:
