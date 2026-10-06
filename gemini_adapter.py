@@ -5,6 +5,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from dataclasses import dataclass
 
 from deepseek_adapter import get_deepseek_client
@@ -36,6 +37,30 @@ class GeminiClient:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.models = _Models(self)
+
+    def _record_usage(self, model: str, usage: dict) -> None:
+        if not usage:
+            return
+        path = os.getenv("ABRAHAM_AI_USAGE_LOG")
+        if not path:
+            return
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "provider": "gemini",
+            "model": model,
+            "prompt_tokens": usage.get("promptTokenCount"),
+            "completion_tokens": usage.get("candidatesTokenCount"),
+            "thought_tokens": usage.get("thoughtsTokenCount"),
+            "cached_tokens": usage.get("cachedContentTokenCount"),
+            "total_tokens": usage.get("totalTokenCount"),
+        }
+        try:
+            target = os.path.abspath(path)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            print(f"[AI USAGE LOG FAILED] gemini: {exc}")
 
     def _deepseek_fallback(self, model: str, contents: str, config: dict):
         fallback_model = os.getenv("DEEPSEEK_GEMINI_FALLBACK_MODEL", "deepseek-flash")
@@ -82,6 +107,7 @@ class GeminiClient:
                     raise RuntimeError(f"Gemini returned no candidates: {data.get('promptFeedback')}")
                 parts = candidates[0].get("content", {}).get("parts", [])
                 text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+                self._record_usage(model, data.get("usageMetadata") or {})
                 if not text.strip():
                     raise RuntimeError("Gemini returned empty content")
                 return GeminiResponse(text=text)
