@@ -9,7 +9,7 @@ import unicodedata
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 
-from gemini_adapter import get_gemini_client
+from provider_router import get_relation_client
 
 ENTITY_TYPES = (
     "Person", "Company", "Organization", "Country", "Place",
@@ -286,12 +286,17 @@ Existing catalog:
 
 def _call(client, documents: list[dict], catalog: list[dict]) -> dict:
     response = client.models.generate_content(
-        model=os.getenv("GEMINI_ENTITY_RELATION_MODEL", os.getenv("GEMINI_RATING_MODEL", "gemini-3.8-flash")),
+        model=os.getenv(
+            "DEEPSEEK_ENTITY_RELATION_MODEL",
+            os.getenv("MODEL", "deepseek-flash"),
+        ),
         contents=_prompt(documents, catalog),
         config={
             "response_mime_type": "application/json",
-            "thinking": os.getenv("ABRAHAM_ENTITY_RELATION_THINKING", os.getenv("ABRAHAM_RATING_THINKING", "low")),
-            "max_output_tokens": int(os.getenv("GEMINI_ENTITY_RELATION_MAX_TOKENS", os.getenv("ABRAHAM_RATING_MAX_TOKENS", "16384"))),
+            "thinking": os.getenv("DEEPSEEK_ENTITY_RELATION_THINKING", "disabled"),
+            "max_output_tokens": int(
+                os.getenv("DEEPSEEK_ENTITY_RELATION_MAX_TOKENS", "8192")
+            ),
         },
     )
     data = json.loads(response.text.strip())
@@ -489,7 +494,7 @@ def extract_and_persist(documents: list[dict], *, apply: bool, limit: int | None
         return {"documents": 0, "api_batches": 0, "entities_created": 0, "document_entity_links": 0, "relations_created": 0, "processed_readwise_ids": []}
 
     batch_size = max(1, int(os.getenv("ENTITY_RELATION_BATCH_SIZE", str(DEFAULT_BATCH))))
-    client = get_gemini_client()
+    client = get_relation_client()
     created_entities = 0
     links = 0
     relations = 0
