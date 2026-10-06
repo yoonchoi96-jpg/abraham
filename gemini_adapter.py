@@ -7,6 +7,8 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from deepseek_adapter import get_deepseek_client
+
 
 @dataclass
 class GeminiResponse:
@@ -22,12 +24,30 @@ class _Models:
 
 
 class GeminiClient:
-    """Minimal REST adapter for Gemini structured-output rating/classification."""
+    """Minimal REST adapter for Gemini structured-output rating/classification.
+
+    If Gemini returns HTTP 402 because the project's prepaid credits are
+    exhausted, Abraham transparently falls back to DeepSeek. This keeps
+    Gemini as the preferred provider while preventing a provider-billing
+    outage from taking down the whole pipeline.
+    """
 
     def __init__(self, api_key: str, base_url: str = "https://generativelanguage.googleapis.com/v1beta"):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.models = _Models(self)
+
+    def _deepseek_fallback(self, model: str, contents: str, config: dict):
+        fallback_model = os.getenv("DEEPSEEK_GEMINI_FALLBACK_MODEL", "deepseek-flash")
+        print(
+            "[GEMINI FALLBACK] HTTP 402/prepaid credits exhausted; "
+            f"switching to DeepSeek model={fallback_model}"
+        )
+        return get_deepseek_client().models.generate_content(
+            model=fallback_model,
+            contents=contents,
+            config=config,
+        )
 
     def generate_content(self, *, model: str, contents: str, config: dict | None = None):
         config = config or {}
@@ -68,6 +88,13 @@ class GeminiClient:
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")
                 last_error = RuntimeError(f"Gemini HTTP {exc.code}: {detail[:2000]}")
+
+                # Gemini prepaid-credit exhaustion is a provider-level
+                # failure, not a document/content failure. Fall back once
+                # to the already-supported DeepSeek provider.
+                if exc.code == 402:
+                    return self._deepseek_fallback(model, contents, config)
+
                 if exc.code not in {429, 500, 502, 503, 504} or attempt >= retries - 1:
                     raise last_error from exc
             except (urllib.error.URLError, TimeoutError, KeyError, json.JSONDecodeError) as exc:
