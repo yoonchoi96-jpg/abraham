@@ -2,6 +2,7 @@ import sqlite3
 
 from entity_relation_ai import (
     _catalog_maps,
+    _canonical_relation,
     _resolve_entity,
     _validate_item,
     ensure_graph_schema,
@@ -55,3 +56,10 @@ def test_graph_schema_supports_idempotent_core_tables():
         )
     }
     assert {"entities", "document_entities", "relations"} <= tables
+
+
+def test_relation_aliases_are_canonicalized():
+    assert _canonical_relation("purchased") == "acquired"
+    assert _canonical_relation("headquartered in") == "headquartered_in"
+    assert _canonical_relation("works for") == "employed_by"
+
