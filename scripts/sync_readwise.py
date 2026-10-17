@@ -101,7 +101,7 @@ def table_columns(conn, table):
 
 def existing_documents(conn):
     columns = table_columns(conn, "documents")
-    select_cols = [c for c in ("readwise_id", "updated_at", "content", "canonical_text") if c in columns]
+    select_cols = [c for c in ("readwise_id", "updated_at", "content", "canonical_text", "readwise_tags") if c in columns]
     if "readwise_id" not in columns:
         raise RuntimeError("documents table has no readwise_id column")
     rows = conn.execute(
@@ -213,7 +213,18 @@ def upsert(conn, item, columns, existing):
 
     old_updated = parse_dt(old.get("updated_at"))
     new_updated = parse_dt(item.get("updated_at"))
-    if new_updated and old_updated and new_updated <= old_updated and content == old_content:
+    new_tags = (
+        json.dumps(item["tags"] or {}, ensure_ascii=False, sort_keys=True)
+        if item.get("tags") is not None else None
+    )
+    tags_changed = (
+        new_tags is not None and "readwise_tags" in columns
+        and new_tags != str(old.get("readwise_tags") or "")
+    )
+    # Reader grade tags are source of truth. Their update must not be skipped
+    # just because the article body and rounded updated_at are unchanged.
+    if (new_updated and old_updated and new_updated <= old_updated
+            and content == old_content and not tags_changed):
         return "unchanged"
 
     values = writable_values(item, columns, content, canonical_text=None)
