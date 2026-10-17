@@ -86,20 +86,21 @@ jobs:
             tar -xzf abraham-vault.tar.gz -C vault
             echo "Restored prior cloud vault state."
           else
-            echo "No prior vault asset found; starting with an empty cloud vault."
+            echo "::error::Private vault release asset missing. Refusing empty-vault overwrite."
+            exit 1
           fi
-
-      - name: Sync Reader backlog (durable backfill lane)
-        env:
-          READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
-          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
-        run: .venv/bin/python scripts/sync_readwise.py --db data/readwise_pipeline.db --lane backfill --max-documents 1000 --lookback-minutes 10
 
       - name: Sync recent Reader changes (fast lane)
         env:
           READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
         run: .venv/bin/python scripts/sync_readwise.py --db data/readwise_pipeline.db --lane fast --max-documents 1000 --lookback-minutes 60
+
+      - name: Sync Reader backlog (durable backfill lane)
+        env:
+          READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+        run: .venv/bin/python scripts/sync_readwise.py --db data/readwise_pipeline.db --lane backfill --max-documents 1000 --lookback-minutes 10
 
 
       - name: Persist synced SQLite state
