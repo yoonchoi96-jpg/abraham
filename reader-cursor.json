@@ -2,10 +2,10 @@
   "version": 1,
   "source": "Readwise Reader Feed",
   "page_limit": 100,
-  "page_cursor": "01m4xs0cgvkbam8a1gcwnq4y12",
-  "scanned": 6250,
-  "last_page_oldest_created_at": "2026-10-14T17:57:48.195427+00:00",
+  "page_cursor": "01m4xdg5n3crvdqcd02azjds78",
+  "scanned": 7050,
+  "last_page_oldest_created_at": "2026-10-14T14:36:42.543050+00:00",
   "status": "next page may contain Unseen; process before checkpoint",
   "updated_at": "2026-10-17",
-  "last_verified_page_at": "2026-10-17T07:36:12.615Z"
+  "last_verified_page_at": "2026-10-17T07:36:41.748Z"
 }
