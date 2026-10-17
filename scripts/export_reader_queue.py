@@ -53,19 +53,21 @@ def build_manifest(db: Path, dest: Path, shard_size: int = SHARD_SIZE) -> dict:
     for start in range(0, len(rows), shard_size):
         entries = [{"id": rid, "state": state}
                    for rid, state in rows[start:start+shard_size]]
-        name = f"pending-{start//shard_size+1:04d}.json"
         payload = {
             "schema": "abraham-reader-queue-v1",
-            "generated_at": now,
             "items": entries,
         }
         body = json.dumps(payload, ensure_ascii=False,
                           separators=(",", ":"), sort_keys=True) + "\n"
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        # Content-addressed, immutable shards: old index remains valid until
+        # index.json is published last, even if a new upload fails halfway.
+        name = f"pending-{digest[:24]}.json"
         (dest / name).write_text(body, encoding="utf-8")
         manifest["shards"].append({
             "filename": name,
             "count": len(entries),
-            "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            "sha256": digest,
         })
     (dest / "index.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
