@@ -1,11 +1,11 @@
 {
   "version": 1,
   "source": "Readwise Reader Feed",
-  "page_limit": 100,
-  "page_cursor": "01m4mkvcqke0dsdkcb4czc0kyj",
-  "scanned": 13650,
-  "last_page_oldest_created_at": "2026-10-11T04:34:31.808472+00:00",
-  "status": "last completed page verified no Unseen; next page listing INVALID_ARGUMENT after 3 attempts and limit=50 fallback",
+  "page_limit": 50,
+  "page_cursor": "01m4hypn3a6tv80vmf5jb5nwjc",
+  "scanned": 15050,
+  "last_page_oldest_created_at": "2026-10-10T03:46:27.568745+00:00",
+  "status": "last completed page verified no Unseen; next page listing INVALID_ARGUMENT; checkpoint before failed page",
   "updated_at": "2026-10-17",
-  "last_verified_page_at": "2026-10-17T10:22:38.290Z"
+  "last_verified_page_at": "2026-10-17T11:18:39.423Z"
 }
