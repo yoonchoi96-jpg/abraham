@@ -13,7 +13,14 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from scripts.reader_queue_state import ensure_tables, get_scan, mark_page, stats as queue_stats, update_queue
+if __package__:
+    from scripts.reader_queue_state import (
+        ensure_tables, get_scan, mark_page, stats as queue_stats, update_queue,
+    )
+else:  # python scripts/sync_readwise.py from the repository root
+    from reader_queue_state import (
+        ensure_tables, get_scan, mark_page, stats as queue_stats, update_queue,
+    )
 
 API = "https://readwise.io/api/v3/list/"
 RATE_SPACING = 3.2
