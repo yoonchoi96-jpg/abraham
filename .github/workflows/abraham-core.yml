@@ -66,6 +66,7 @@ jobs:
           echo "Private state repository verified."
 
       - name: Restore SQLite state
+        id: restore_state
         env:
           GH_TOKEN: ${{ secrets.ABRAHAM_STATE_TOKEN }}
         run: |
@@ -103,12 +104,14 @@ jobs:
         run: .venv/bin/python scripts/sync_readwise.py --db data/readwise_pipeline.db --lane backfill --max-documents 1000 --lookback-minutes 10
 
 
-      - name: Persist synced SQLite state
+      - name: Persist synced SQLite state (even after partial API failure)
+        if: ${{ always() && steps.restore_state.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ secrets.ABRAHAM_STATE_TOKEN }}
         run: |
           set -euo pipefail
           test -s data/readwise_pipeline.db
+          .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
           gh release upload state-current --repo "${ABRAHAM_STATE_REPOSITORY}" data/readwise_pipeline.db --clobber
 
       - name: Reader backlog and sync checkpoint summary
