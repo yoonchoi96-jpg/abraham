@@ -129,6 +129,34 @@ class DurableReaderQueueTests(unittest.TestCase):
             ).fetchone()[0], 1)
             conn.close()
 
+    def test_same_timestamp_tag_update_refreshes_sqlite_grade(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "abraham.db"
+            make_db(path)
+            payload = {"results": [doc("A")], "nextPageCursor": None}
+            with patch("scripts.sync_readwise.api_get", return_value=payload):
+                with patch.dict("os.environ", {"READWISE_TOKEN": "test"}):
+                    sync(path, 10, 10)
+            payload2 = {
+                "results": [doc("A", tags={
+                    "등급/🔵파랑": {"name": "등급/🔵파랑"}
+                }, opened="2026-10-17T02:00:00Z")],
+                "nextPageCursor": None,
+            }
+            with patch("scripts.sync_readwise.api_get", return_value=payload2):
+                with patch.dict("os.environ", {"READWISE_TOKEN": "test"}):
+                    sync(path, 10, 10, lane="fast")
+            conn = sqlite3.connect(path)
+            record = conn.execute(
+                "SELECT readwise_tags FROM documents WHERE readwise_id='A'"
+            ).fetchone()[0]
+            state = conn.execute(
+                "SELECT state FROM reader_first_pass_queue WHERE readwise_id='A'"
+            ).fetchone()[0]
+            conn.close()
+            self.assertIn("등급/🔵파랑", record)
+            self.assertEqual(state, "graded_seen")
+
     def test_fast_lane_does_not_overwrite_backfill_cursor(self):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "abraham.db"
