@@ -256,7 +256,7 @@ def existing_documents_for_page(conn, items):
     return {str(row[0]): dict(zip(select_cols, row)) for row in rows}
 
 
-def sync(db_path: Path, max_documents: int, lookback_minutes: int):
+def sync(db_path: Path, max_documents: int, lookback_minutes: int, lane: str = 'backfill'):
     """Durable, bounded Reader scan.
 
     A capped invocation NEVER advances its time watermark. Each committed page
@@ -269,7 +269,7 @@ def sync(db_path: Path, max_documents: int, lookback_minutes: int):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     ensure_tables(conn)
-    state = get_scan(conn)
+    state = get_scan(conn, lane=lane)
     window_start, window_end = state["window_start"], state["window_end"]
     cursor = state["page_cursor"]
     columns = table_columns(conn, "documents")
@@ -302,8 +302,8 @@ def sync(db_path: Path, max_documents: int, lookback_minutes: int):
                     conn.execute(
                         """UPDATE reader_ingest_progress
                            SET page_cursor=NULL, pages=0, updated_at=?
-                           WHERE name='reader'""",
-                        (datetime.now(timezone.utc).isoformat(),),
+                           WHERE name=?""",
+                        (datetime.now(timezone.utc).isoformat(), "reader" if lane == "backfill" else "reader_fast"),
                     )
                     conn.commit()
                     continue
@@ -327,7 +327,7 @@ def sync(db_path: Path, max_documents: int, lookback_minutes: int):
                                       "content": normalize_content(item)}
             counters["fetched"] += len(page)
             counters["pages"] += 1
-            mark_page(conn, next_cursor, window_end, lookback_minutes)
+            mark_page(conn, next_cursor, window_end, lookback_minutes, lane=lane)
             # Atomic checkpoint: page mutations and next cursor together.
             conn.commit()
             cursor = next_cursor
@@ -335,7 +335,7 @@ def sync(db_path: Path, max_documents: int, lookback_minutes: int):
                 break
             if not page:
                 raise RuntimeError("Reader returned an empty page with next cursor")
-        snapshot = queue_stats(conn)
+        snapshot = queue_stats(conn, lane=lane)
         count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
         completed = snapshot["scan"]["window_end"] is None
         print(
@@ -343,7 +343,7 @@ def sync(db_path: Path, max_documents: int, lookback_minutes: int):
             f"fetched={counters['fetched']} inserted={counters['inserted']} "
             f"updated={counters['updated']} unchanged={counters['unchanged']} "
             f"unavailable={counters['unavailable']} documents={count} "
-            f"pages={counters['pages']} cursor_resets={counters['cursor_resets']} "
+            f"lane={lane} pages={counters['pages']} cursor_resets={counters['cursor_resets']} "
             f"scan_exhausted={completed} "
             f"window_start={window_start or 'full-backfill'} "
             f"inventory={snapshot['inventory']}"
@@ -358,5 +358,6 @@ if __name__ == "__main__":
     parser.add_argument("--db", required=True)
     parser.add_argument("--max-documents", type=int, default=1000)
     parser.add_argument("--lookback-minutes", type=int, default=10)
+    parser.add_argument("--lane", choices=["fast", "backfill"], default="backfill")
     args = parser.parse_args()
-    sync(Path(args.db), max(1, args.max_documents), max(0, args.lookback_minutes))
+    sync(Path(args.db), max(1, args.max_documents), max(0, args.lookback_minutes), lane=args.lane)
