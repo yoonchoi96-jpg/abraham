@@ -44,6 +44,16 @@ jobs:
           .venv/bin/python -m pip install pytest
           .venv/bin/python -m pytest -q tests
 
+      - name: Refuse production state access from public repository
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          if [ "${REPOSITORY_PRIVATE}" != "true" ]; then
+            echo "::error::ABRAHAM SECURITY: repository must be PRIVATE before syncing or uploading SQLite/Vault release assets."
+            exit 1
+          fi
+
       - name: Restore SQLite state
         env:
           GH_TOKEN: ${{ github.token }}
