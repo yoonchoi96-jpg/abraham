@@ -25,13 +25,17 @@ Former ingestion fetched at most 1,000 Reader results and then selected the **ma
 
 As observed on **2026-10-17**, repository `yoonchoi96-jpg/abraham` is **PUBLIC** and the published `state-current` release exposes a `readwise_pipeline.db` asset (roughly 1.2 GB) and `abraham-vault.tar.gz`. A public release asset is not a private database, regardless of the file name or README wording.
 
-**Immediate owner action is required**: lock down the repository and existing release/assets, review historical exposure, and rotate any credentials that might have been stored in those assets. Do not publish queue IDs, titles, bodies, or checkpoints to public repository files, workflow logs, artifacts, release bodies or issues. No production data is modified by this branch or PR.
+**User preference (2026-10-17): keep the Abraham CODE repository PUBLIC.** Do not change its visibility. Instead, create a separate **PRIVATE** state repository and move canonical state releases there after validating original database/vault copies. Existing public release assets remain exposed until the owner safely retires them; this PR does not delete them. Review historical exposure and rotate any credentials inadvertently included in state assets. Do not publish queue IDs, titles, bodies or private checkpoints to public files, workflow logs, artifacts, release bodies or issues. No production data was modified by this branch or PR.
 
 ## GPT connector bridge still needed
 
 ChatGPT Tasks can read connected Readwise documents but **cannot directly open** an SQLite file held as a GitHub release asset. The new tables alone do not make the scheduled GPT task resume by queue ID. After the data location is private, design an **authenticated private queue handoff** readable by the ChatGPT task (for example an approved private connected service); prove that permissions, serialization and acknowledgments work before redirecting the hourly GPT task. Never publish real Reader IDs to a public git file to fake the bridge.
 
 **Do not change the GPT task prompt to claim queue consumption until that authenticated bridge is tested.** Until then, existing GPT automation continues to use Readwise directly.
+
+A private-only queue manifest generator is now available:
+`python scripts/export_reader_queue.py --db data/readwise_pipeline.db --output-dir "$RUNNER_TEMP/reader-queue"`.
+It writes content-addressed shards and an index containing Reader IDs only (no document body). Those generated files are **still sensitive**. They are not uploaded automatically; publishing the private manifest and making it accessible to ChatGPT Tasks require a separately approved and tested authenticated handoff. Do not use workflow artifacts in a public repo as a substitute.
 
 ## Tests
 
@@ -42,8 +46,9 @@ Token-free tests in `tests/test_reader_queue_recovery.py` cover: 1,000-style par
 1. Secure production repository and state assets.
 2. Run PR CI, review branch diff, and test against an **isolated copy** of the real SQLite state; verify `PRAGMA integrity_check`.
 3. Confirm Reader cursor longevity under real scheduled invocations. HTTP 400/410 reset is safe but repeated expiration may prevent full backfill and needs an alternative page partition strategy.
-4. Deploy by controlled merge. The current workflow still fetches at most 1,000 docs **per invocation**, but now checkpoints across invocations. No hard daily completion guarantee.
-5. Introduce and test an authenticated private queue connector for GPT. Only then report end-to-end queue consumption complete.
+4. **Public-code/private-state deployment**: keep `abraham` public, create a separate private state repo with a `state-current` release containing validated `readwise_pipeline.db` and `abraham-vault.tar.gz`. Configure the public code repo's `vars.ABRAHAM_STATE_REPOSITORY` to `owner/private-repo` and `secrets.ABRAHAM_STATE_TOKEN` to a fine-grained token with read/write permission for the private state repo only. The code workflow explicitly checks `.private=true` before any download/upload and refuses missing vault assets. Test on a copy, then merge only when the private release state is ready. Do not put tokens in source code or output logs.
+5. The new workflow runs **fast recent-update lane first**, then independent historical-backfill lane; each lane permits up to 1,000 documents per invocation and persists its own cursor. No hard daily completion guarantee.
+6. Introduce and test an authenticated private queue connector for GPT. Only then report end-to-end queue consumption complete.
 
 ## Known limitations
 
@@ -52,3 +57,10 @@ Token-free tests in `tests/test_reader_queue_recovery.py` cover: 1,000-style par
 - Some Reader results may omit tags or seen fields; such items are inventoried as `unverified`, never assumed unseen or completed.
 - The inventory reflects last observed source state, not a durable `GPT-claimed` / `GPT-acknowledged` transaction. That requires the private connector.
 - Successful sync updates the existing canonical source rows; it does **not** mark anything Seen or apply any color in Reader.
+
+
+## Diagnostics and validation
+
+Run `python scripts/reader_queue_status.py --db data/readwise_pipeline.db` to show only aggregate counts for `pending`, `tagged_unseen`, `graded_seen`, `seen_untagged`, `conflict` and cursor-health flags for each lane. It never prints document IDs or opaque page cursors. The status represents the **last observed** Reader state; freshly GPT-tagged documents may not be reflected until the next incremental synchronization.
+
+The proposed workflow does **not** expose Reader IDs or private DB on a public GitHub Actions artifact. The reader queue index is only a potential privately published handoff, not a completed ChatGPT Tasks connection.
