@@ -129,6 +129,51 @@ class DurableReaderQueueTests(unittest.TestCase):
             ).fetchone()[0], 1)
             conn.close()
 
+    def test_fast_lane_does_not_overwrite_backfill_cursor(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "abraham.db"
+            make_db(path)
+            def api(_token, params):
+                if "updatedAfter" not in params:
+                    return {"results": [doc("OLD")], "nextPageCursor": "old-next"}
+                return {"results": [doc("NEW")], "nextPageCursor": None}
+            with patch("scripts.sync_readwise.api_get", side_effect=api):
+                with patch.dict("os.environ", {"READWISE_TOKEN": "test"}):
+                    sync(path, 1, 10, lane="backfill")
+                    sync(path, 1, 10, lane="fast")
+            conn = sqlite3.connect(path)
+            rows = dict(conn.execute(
+                "SELECT name,page_cursor FROM reader_ingest_progress"
+            ).fetchall())
+            self.assertEqual(rows["reader"], "old-next")
+            self.assertIsNone(rows["reader_fast"])
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) FROM documents"
+            ).fetchone()[0], 2)
+            conn.close()
+
+    def test_fast_lane_failure_keeps_its_own_resume_cursor(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "abraham.db"
+            make_db(path)
+            def initial(_token, params):
+                return {"results": [doc("FAST1")], "nextPageCursor": "f-next"}
+            with patch("scripts.sync_readwise.api_get", side_effect=initial):
+                with patch.dict("os.environ", {"READWISE_TOKEN": "test"}):
+                    sync(path, 1, 10, lane="fast")
+            conn = sqlite3.connect(path)
+            self.assertEqual(conn.execute(
+                "SELECT page_cursor FROM reader_ingest_progress "
+                "WHERE name='reader_fast'"
+            ).fetchone()[0], "f-next")
+            conn.close()
+            def resume(_token, params):
+                self.assertEqual(params.get("pageCursor"), "f-next")
+                return {"results": [doc("FAST2")], "nextPageCursor": None}
+            with patch("scripts.sync_readwise.api_get", side_effect=resume):
+                with patch.dict("os.environ", {"READWISE_TOKEN": "test"}):
+                    sync(path, 1, 10, lane="fast")
+
     def test_queue_distinguishes_tagged_unseen_and_seen_untagged(self):
         tag = {"등급/🔵파랑": {"name": "등급/🔵파랑"}}
         self.assertEqual(queue_state(doc("A", tags=tag, opened=None)),
