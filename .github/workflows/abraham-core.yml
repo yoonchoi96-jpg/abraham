@@ -110,6 +110,9 @@ jobs:
           test -s data/readwise_pipeline.db
           gh release upload state-current --repo "${ABRAHAM_STATE_REPOSITORY}" data/readwise_pipeline.db --clobber
 
+      - name: Reader backlog and sync checkpoint summary
+        run: .venv/bin/python scripts/reader_queue_status.py --db data/readwise_pipeline.db
+
       - name: Freeze 1000-document run workset
         env:
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
