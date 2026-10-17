@@ -131,12 +131,12 @@ class DurableReaderQueueTests(unittest.TestCase):
 
     def test_queue_distinguishes_tagged_unseen_and_seen_untagged(self):
         tag = {"등급/🔵파랑": {"name": "등급/🔵파랑"}}
-        self.assertEqual(queue_state(doc("A", tag, None)),
+        self.assertEqual(queue_state(doc("A", tags=tag, opened=None)),
                          ("tagged_unseen", "등급/🔵파랑"))
-        self.assertEqual(queue_state(doc("B", {}, None)), ("pending", None))
-        self.assertEqual(queue_state(doc("C", tag, "2026-10-17T04:30:00Z")),
+        self.assertEqual(queue_state(doc("B", tags={}, opened=None)), ("pending", None))
+        self.assertEqual(queue_state(doc("C", tags=tag, opened="2026-10-17T04:30:00Z")),
                          ("graded_seen", "등급/🔵파랑"))
-        self.assertEqual(queue_state(doc("D", {}, "2026-10-17T04:30:00Z")),
+        self.assertEqual(queue_state(doc("D", tags={}, opened="2026-10-17T04:30:00Z")),
                          ("seen_untagged", None))
         self.assertEqual(queue_state({"id": "E", "tags": {}}),
                          ("unverified", None))
