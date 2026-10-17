@@ -1,0 +1,30 @@
+name: Reader sync queue regression
+
+on:
+  pull_request:
+    paths:
+      - "scripts/sync_readwise.py"
+      - "scripts/reader_queue_state.py"
+      - "tests/test_reader_queue_recovery.py"
+      - "tests/test_readwise_sync.py"
+      - ".github/workflows/reader-sync-queue-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reader-queue-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile Reader ingestion scripts
+        run: python -m py_compile scripts/sync_readwise.py scripts/reader_queue_state.py
+      - name: Reader regression tests (no tokens, no real DB)
+        run: python -m unittest discover -s tests -p 'test_reader*.py' -v
+      - name: Legacy ingestion regression tests
+        run: python -m unittest tests.test_readwise_sync -v
