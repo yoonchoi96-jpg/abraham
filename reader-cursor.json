@@ -2,10 +2,10 @@
   "version": 1,
   "source": "Readwise Reader Feed",
   "page_limit": 50,
-  "page_cursor": "01m3w7h3wcgqmj2gzq033e234g",
-  "scanned": 25885,
-  "last_page_oldest_created_at": "2026-10-01T17:17:25.786098+00:00",
-  "status": "Verified 200 consecutive Seen backlog documents; stopped at INVALID_ARGUMENT: Error code: INVALID_ARGUMENT; Error: Runti",
-  "updated_at": "2026-10-18",
-  "last_verified_page_at": "2026-10-18T12:22:13.800Z"
+  "page_cursor": "01m3twp55e8pkqkjqkzz4h873s",
+  "scanned": 26635,
+  "last_page_oldest_created_at": "2026-10-01T04:48:42.167473+00:00",
+  "status": "Verified 15 consecutive Seen pages; next page read error",
+  "updated_at": "2026-10-18T14:18:36.662Z",
+  "last_verified_page_at": "2026-10-18T14:18:36.662Z"
 }
