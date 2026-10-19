@@ -1,20 +1,6 @@
 name: Abraham V5 CI
 
 "on":
-  push:
-    paths:
-      - "*.py"
-      - "scripts/**"
-      - "tests/**"
-      - ".github/workflows/**"
-      - "requirements.txt"
-  pull_request:
-    paths:
-      - "*.py"
-      - "scripts/**"
-      - "tests/**"
-      - ".github/workflows/**"
-      - "requirements.txt"
   workflow_dispatch:
 
 permissions:
