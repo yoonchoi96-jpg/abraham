@@ -290,7 +290,13 @@ class Drive:
     def __init__(self):
         raw = os.getenv("DRIVE_OAUTH_JSON", "")
         if not raw:
-            raise RuntimeError("MISSING_DRIVE_OAUTH_JSON")
+            config = {k: os.getenv(env, "") for k, env in {
+                "client_id": "GOOGLE_DRIVE_OAUTH_CLIENT_ID",
+                "client_secret": "GOOGLE_DRIVE_OAUTH_CLIENT_SECRET",
+                "refresh_token": "GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN"}.items()}
+            if not all(config.values()):
+                raise RuntimeError("MISSING_DRIVE_OAUTH_JSON")
+            raw = json.dumps(config)
         try:
             self.config = json.loads(raw)
             if not all(self.config.get(k) for k in ("client_id", "client_secret", "refresh_token")):
@@ -338,6 +344,34 @@ class Drive:
         return self.api("files", data={"name": "Reader Intake — GitHub", "mimeType":
                         "application/vnd.google-apps.folder", "appProperties": {"pipeline": PIPELINE}},
                         method="POST")["id"]
+
+    def source_request(self, doc_id):
+        meta = self.api("files/" + urllib.parse.quote(doc_id, safe=""),
+                        {"fields": "mimeType,shared"})
+        if meta.get("shared") or meta.get("mimeType") != "application/vnd.google-apps.document":
+            raise RuntimeError("PRIVATE_REQUEST_DOCUMENT_REQUIRED")
+        url = ("https://www.googleapis.com/drive/v3/files/" +
+               urllib.parse.quote(doc_id, safe="") + "/export?mimeType=text%2Fplain")
+        try:
+            request = urllib.request.Request(url, headers=self.headers())
+            with urllib.request.urlopen(request, timeout=120) as response:
+                payload = response.read(64 * 1024 + 1)
+            if len(payload) > 64 * 1024:
+                raise RuntimeError("SOURCE_REQUEST_TOO_LARGE")
+            data = json.loads(payload.decode("utf-8-sig").strip())
+        except (ValueError, urllib.error.HTTPError, urllib.error.URLError):
+            raise RuntimeError("SOURCE_REQUEST_UNREADABLE") from None
+        if data.get("schema") != "reader-source-request-v1" or not data.get("download_url"):
+            raise RuntimeError("INVALID_SOURCE_REQUEST")
+        return data
+
+    def require_capacity(self, required_bytes):
+        quota = self.api("about", {"fields": "storageQuota"})["storageQuota"]
+        limit = quota.get("limit")
+        if not limit:
+            raise RuntimeError("DRIVE_STORAGE_LIMIT_UNVERIFIED")
+        if int(limit) - int(quota.get("usage", 0)) < required_bytes:
+            raise RuntimeError("DRIVE_EXISTING_QUOTA_EXHAUSTED")
 
     def get_media(self, file_id, destination):
         request = urllib.request.Request("https://www.googleapis.com/drive/v3/files/"
@@ -459,7 +493,10 @@ def run_cloud():
             drive.get_media(previous["index"]["id"], state)
             if digest_file(state) != previous["index"]["sha256"]:
                 raise RuntimeError("PRIOR_STATE_CHECKSUM_MISMATCH")
-        archive = reader_export(work)
+        source_doc = os.getenv("READER_REQUEST_DOC_ID", "")
+        source_request = drive.source_request(source_doc) if source_doc else None
+        archive = (download_zip(source_request["download_url"], work)
+                   if source_request else reader_export(work))
         if shutil.disk_usage(work).free < 2 * 1024**3:
             raise RuntimeError("INSUFFICIENT_EPHEMERAL_DISK")
         engine = Intake(work, state)
@@ -471,6 +508,9 @@ def run_cloud():
             print(json.dumps({"event": "reader_intake", "status": "already_complete", "additional_api_cost": 0}))
             return
         # Preserve the untouched ZIP before any new state becomes discoverable.
+        required = archive.stat().st_size + sum(
+            (Path(work)/name).stat().st_size for name in result["shards"] + ["issues.jsonl.gz", "index.sqlite"])
+        drive.require_capacity(required + 1024 * 1024)
         source_id = drive.upload(archive, folder, "source")
         files = []
         for name in result["shards"] + ["issues.jsonl.gz"]:

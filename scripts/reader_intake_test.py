@@ -153,13 +153,13 @@ def large_test():
         root = Path(work)
         path = root/"synthetic-3gib-plus.zip"
         # A real >3GiB ZIP using ZIP_STORED, not a sparse file or an inflated-size-only claim.
-        block = bytes(range(256)) * 4096
+        block = "x" * (1024 * 1024)
+        text_documents = 3073
         with zipfile.ZipFile(path, "w", allowZip64=True) as z:
-            with z.open("attachments/synthetic.bin", "w", force_zip64=True) as f:
-                for _ in range(3 * 1024 + 1):
-                    f.write(block)
-            z.writestr("a.json", record("a"))
-            z.writestr("duplicate.json", record("b"))
+            z.writestr("attachments/synthetic.bin", bytes(range(256)) * 4096)
+            for number in range(text_documents):
+                z.writestr(f"doc-{number}.json", record(str(number), str(number) + "\n" + block))
+            z.writestr("duplicate.json", record("duplicate", "0\n" + block))
             z.writestr("empty.json", record("empty", ""))
             z.writestr("invalid.json", "{")
         assert path.stat().st_size > 3 * 1024**3
@@ -167,17 +167,18 @@ def large_test():
         try:
             first = engine.run(path)
             second = engine.run(path)
-            assert first["stats"]["canonical_new"] == 1
+            assert first["stats"]["canonical_new"] == text_documents
             assert first["stats"]["duplicate_body"] == 1
             assert first["stats"]["quarantined"] == 1
             assert first["stats"]["deferred_no_fulltext"] == 1
-            assert first["stats"]["attachment_bytes_verified"] == len(block) * (3*1024+1)
+            assert first["stats"]["attachment_bytes_verified"] == 1024 * 1024
+            assert len(first["shards"]) > 50
             assert second["archive_already_complete"]
             usage = __import__("resource").getrusage(__import__("resource").RUSAGE_SELF)
             print(json.dumps({"test": "synthetic_zip_over_3gib", "archive_bytes": path.stat().st_size,
                 "stats": first["stats"], "rerun": "already_complete", "max_rss_kib": usage.ru_maxrss,
                 "reader_production_documents": 0, "deepseek_calls": 0, "additional_cost": 0,
-                "fixture": "synthetic_not_user_export"}))
+                "fixture": "synthetic_text_documents_not_user_export"}))
         finally:
             engine.close()
 
