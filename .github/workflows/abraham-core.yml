@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 350
     env:
       ABRAHAM_WORKSET_PATH: ${{ github.workspace }}/.abraham_workset.json
+      ABRAHAM_STATE_REPOSITORY: ${{ vars.ABRAHAM_STATE_REPOSITORY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,43 +41,77 @@ jobs:
           .venv/bin/python -m pip install pytest
           .venv/bin/python -m pytest -q tests
 
-      - name: Restore SQLite state
+      - name: Verify private state repository before accessing Reader data
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.ABRAHAM_STATE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ABRAHAM_STATE_REPOSITORY}" ] || [ -z "${GH_TOKEN}" ]; then
+            echo "::error::Set vars.ABRAHAM_STATE_REPOSITORY and secrets.ABRAHAM_STATE_TOKEN."
+            exit 1
+          fi
+          if [ "${ABRAHAM_STATE_REPOSITORY}" = "${GITHUB_REPOSITORY}" ]; then
+            echo "::error::Production state must be outside the public code repository."
+            exit 1
+          fi
+          is_private="$(gh api "repos/${ABRAHAM_STATE_REPOSITORY}" --jq '.private')"
+          if [ "${is_private}" != "true" ]; then
+            echo "::error::State repository is not private. Refusing SQLite/Vault transfer."
+            exit 1
+          fi
+          echo "Private state repository verified."
+
+      - name: Restore SQLite state
+        id: restore_state
+        env:
+          GH_TOKEN: ${{ secrets.ABRAHAM_STATE_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p data
-          gh release download state-current --pattern readwise_pipeline.db --dir data --clobber
+          gh release download state-current --repo "${ABRAHAM_STATE_REPOSITORY}" --pattern readwise_pipeline.db --dir data --clobber
           test -s data/readwise_pipeline.db
           .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
 
 
       - name: Restore latest Obsidian vault state
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.ABRAHAM_STATE_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p vault
-          if gh release download state-current --pattern abraham-vault.tar.gz --dir . --clobber; then
+          if gh release download state-current --repo "${ABRAHAM_STATE_REPOSITORY}" --pattern abraham-vault.tar.gz --dir . --clobber; then
             tar -xzf abraham-vault.tar.gz -C vault
             echo "Restored prior cloud vault state."
           else
-            echo "No prior vault asset found; starting with an empty cloud vault."
+            echo "::error::Private vault release asset missing. Refusing empty-vault overwrite."
+            exit 1
           fi
 
-      - name: Sync Readwise Reader
+      - name: Sync recent Reader changes (fast lane)
         env:
           READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
           ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
-        run: .venv/bin/python scripts/sync_readwise.py --db data/readwise_pipeline.db --max-documents 1000 --lookback-minutes 10
+        run: .venv/bin/python scripts/sync_readwise.py --db data/readwise_pipeline.db --lane fast --max-documents 1000 --lookback-minutes 60
 
-      - name: Persist synced SQLite state
+      - name: Sync Reader backlog (durable backfill lane)
         env:
-          GH_TOKEN: ${{ github.token }}
+          READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
+          ABRAHAM_DB_PATH: ${{ github.workspace }}/data/readwise_pipeline.db
+        run: .venv/bin/python scripts/sync_readwise.py --db data/readwise_pipeline.db --lane backfill --max-documents 1000 --lookback-minutes 10
+
+
+      - name: Persist synced SQLite state (even after partial API failure)
+        if: ${{ always() && steps.restore_state.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.ABRAHAM_STATE_TOKEN }}
         run: |
           set -euo pipefail
           test -s data/readwise_pipeline.db
-          gh release upload state-current data/readwise_pipeline.db --clobber
+          .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
+          gh release upload state-current --repo "${ABRAHAM_STATE_REPOSITORY}" data/readwise_pipeline.db --clobber
+
+      - name: Reader backlog and sync checkpoint summary
+        run: .venv/bin/python scripts/reader_queue_status.py --db data/readwise_pipeline.db
 
       - name: Freeze 1000-document run workset
         env:
@@ -120,11 +155,11 @@ jobs:
 
       - name: Persist graph SQLite state
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.ABRAHAM_STATE_TOKEN }}
         run: |
           set -euo pipefail
           .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
-          gh release upload state-current data/readwise_pipeline.db --clobber
+          gh release upload state-current --repo "${ABRAHAM_STATE_REPOSITORY}" data/readwise_pipeline.db --clobber
 
       - name: Run Abraham core
         id: abraham
@@ -186,15 +221,15 @@ jobs:
       - name: Persist SQLite and Obsidian vault state
         if: always() && steps.abraham.outcome != 'cancelled'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.ABRAHAM_STATE_TOKEN }}
         run: |
           set -euo pipefail
           test -s data/readwise_pipeline.db
           .venv/bin/python scripts/verify_state.py --db data/readwise_pipeline.db
-          gh release upload state-current data/readwise_pipeline.db --clobber
+          gh release upload state-current --repo "${ABRAHAM_STATE_REPOSITORY}" data/readwise_pipeline.db --clobber
           if [ -d vault ]; then
             tar -czf abraham-vault.tar.gz -C vault .
-            gh release upload state-current abraham-vault.tar.gz --clobber
+            gh release upload state-current --repo "${ABRAHAM_STATE_REPOSITORY}" abraham-vault.tar.gz --clobber
           fi
 
       - name: Run V6-V9 intelligence
@@ -210,13 +245,13 @@ jobs:
       - name: Refresh persistent state release
         if: steps.abraham.outcome == 'success'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.ABRAHAM_STATE_TOKEN }}
         run: |
           set -euo pipefail
-          if gh release view state-current >/dev/null 2>&1; then
-            gh release upload state-current data/readwise_pipeline.db --clobber
+          if gh release view state-current --repo "${ABRAHAM_STATE_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload state-current --repo "${ABRAHAM_STATE_REPOSITORY}" data/readwise_pipeline.db --clobber
           else
-            gh release create state-current data/readwise_pipeline.db --title "Abraham SQLite State" --notes "Rolling persistent SQLite state for Abraham V5.6.3."
+            gh release create state-current --repo "${ABRAHAM_STATE_REPOSITORY}" data/readwise_pipeline.db --title "Abraham SQLite State" --notes "Rolling persistent SQLite state for Abraham V5.6.3."
           fi
 
       - name: Fail if Abraham core failed after state persistence

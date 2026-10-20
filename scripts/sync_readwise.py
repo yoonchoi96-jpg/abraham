@@ -13,6 +13,15 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+if __package__:
+    from scripts.reader_queue_state import (
+        ensure_tables, get_scan, mark_page, stats as queue_stats, update_queue,
+    )
+else:  # python scripts/sync_readwise.py from the repository root
+    from reader_queue_state import (
+        ensure_tables, get_scan, mark_page, stats as queue_stats, update_queue,
+    )
+
 API = "https://readwise.io/api/v3/list/"
 RATE_SPACING = 3.2
 
@@ -92,7 +101,7 @@ def table_columns(conn, table):
 
 def existing_documents(conn):
     columns = table_columns(conn, "documents")
-    select_cols = [c for c in ("readwise_id", "updated_at", "content", "canonical_text") if c in columns]
+    select_cols = [c for c in ("readwise_id", "updated_at", "content", "canonical_text", "readwise_tags") if c in columns]
     if "readwise_id" not in columns:
         raise RuntimeError("documents table has no readwise_id column")
     rows = conn.execute(
@@ -204,7 +213,18 @@ def upsert(conn, item, columns, existing):
 
     old_updated = parse_dt(old.get("updated_at"))
     new_updated = parse_dt(item.get("updated_at"))
-    if new_updated and old_updated and new_updated <= old_updated and content == old_content:
+    new_tags = (
+        json.dumps(item["tags"] or {}, ensure_ascii=False, sort_keys=True)
+        if item.get("tags") is not None else None
+    )
+    tags_changed = (
+        new_tags is not None and "readwise_tags" in columns
+        and new_tags != str(old.get("readwise_tags") or "")
+    )
+    # Reader grade tags are source of truth. Their update must not be skipped
+    # just because the article body and rounded updated_at are unchanged.
+    if (new_updated and old_updated and new_updated <= old_updated
+            and content == old_content and not tags_changed):
         return "unchanged"
 
     values = writable_values(item, columns, content, canonical_text=None)
@@ -231,51 +251,117 @@ def upsert(conn, item, columns, existing):
     return "updated"
 
 
-def sync(db_path: Path, max_documents: int, lookback_minutes: int):
+def existing_documents_for_page(conn, items):
+    """Load ONLY records on this page; don't pull the 1GB source into RAM."""
+    ids = list(dict.fromkeys(str(x["id"]) for x in items if x.get("id")))
+    if not ids:
+        return {}
+    columns = table_columns(conn, "documents")
+    select_cols = [c for c in ("readwise_id", "updated_at", "content", "canonical_text")
+                   if c in columns]
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        "SELECT " + ",".join(select_cols) + " FROM documents "
+        + "WHERE readwise_id IN (" + placeholders + ")", ids
+    ).fetchall()
+    return {str(row[0]): dict(zip(select_cols, row)) for row in rows}
+
+
+def sync(db_path: Path, max_documents: int, lookback_minutes: int, lane: str = 'backfill'):
+    """Durable, bounded Reader scan.
+
+    A capped invocation NEVER advances its time watermark. Each committed page
+    stores the next page cursor together with its document/queue mutations.
+    """
     token = os.environ.get("READWISE_TOKEN")
     if not token:
         raise RuntimeError("READWISE_TOKEN is required.")
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    ensure_tables(conn)
+    state = get_scan(conn, lane=lane)
+    window_start, window_end = state["window_start"], state["window_end"]
+    cursor = state["page_cursor"]
     columns = table_columns(conn, "documents")
-    existing = existing_documents(conn)
 
-    latest = max(
-        (parse_dt(row.get("updated_at")) for row in existing.values()),
-        default=None,
-    )
-    updated_after = (
-        latest - timedelta(minutes=lookback_minutes)
-        if latest else None
-    )
+    counters = {"fetched": 0, "inserted": 0, "updated": 0,
+                "unchanged": 0, "unavailable": 0,
+                "pages": 0, "cursor_resets": 0}
+    unique_ids = set()
+    max_documents = max(1, max_documents)
+    try:
+        while counters["fetched"] < max_documents:
+            params = {
+                "limit": min(100, max_documents - counters["fetched"]),
+                "withHtmlContent": "true",
+            }
+            if window_start:
+                params["updatedAfter"] = window_start
+            if cursor:
+                params["pageCursor"] = cursor
 
-    items = fetch_recent(token, updated_after, max_documents)
-    stats = {
-        "fetched": len(items),
-        "inserted": 0,
-        "updated": 0,
-        "unchanged": 0,
-        "unavailable": 0,
-    }
+            try:
+                data = api_get(token, params)
+            except urllib.error.HTTPError as exc:
+                # A Reader cursor can expire between scheduled invocations.
+                # Restart the SAME window once, not an advanced watermark.
+                if (cursor and exc.code in {400, 410}
+                        and counters["cursor_resets"] == 0):
+                    counters["cursor_resets"] += 1
+                    cursor = None
+                    conn.execute(
+                        """UPDATE reader_ingest_progress
+                           SET page_cursor=NULL, pages=0, updated_at=?
+                           WHERE name=?""",
+                        (datetime.now(timezone.utc).isoformat(), "reader" if lane == "backfill" else "reader_fast"),
+                    )
+                    conn.commit()
+                    continue
+                raise
 
-    for item in items:
-        if not item.get("id"):
-            continue
-        result = upsert(conn, item, columns, existing)
-        stats[result] += 1
-
-    conn.commit()
-    count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-    conn.close()
-
-    print(
-        "READWISE_SYNC_OK "
-        f"fetched={stats['fetched']} inserted={stats['inserted']} "
-        f"updated={stats['updated']} unchanged={stats['unchanged']} "
-        f"unavailable={stats['unavailable']} "
-        f"documents={count} updated_after={updated_after.isoformat() if updated_after else 'none'}"
-    )
+            page = data.get("results") or []
+            next_cursor = data.get("nextPageCursor")
+            existing = existing_documents_for_page(conn, page)
+            # Process all actual page items. A truncated page would silently
+            # skip unread IDs while advancing its cursor.
+            for item in page:
+                rid = item.get("id")
+                if not rid or rid in unique_ids:
+                    continue
+                unique_ids.add(rid)
+                result = upsert(conn, item, columns, existing)
+                counters[result] += 1
+                update_queue(conn, item)
+                existing[str(rid)] = {"readwise_id": rid,
+                                      "updated_at": item.get("updated_at"),
+                                      "content": normalize_content(item)}
+            counters["fetched"] += len(page)
+            counters["pages"] += 1
+            mark_page(conn, next_cursor, window_end, lookback_minutes, lane=lane)
+            # Atomic checkpoint: page mutations and next cursor together.
+            conn.commit()
+            cursor = next_cursor
+            if not cursor:
+                break
+            if not page:
+                raise RuntimeError("Reader returned an empty page with next cursor")
+        snapshot = queue_stats(conn, lane=lane)
+        count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        completed = snapshot["scan"]["window_end"] is None
+        print(
+            "READWISE_SYNC_OK "
+            f"fetched={counters['fetched']} inserted={counters['inserted']} "
+            f"updated={counters['updated']} unchanged={counters['unchanged']} "
+            f"unavailable={counters['unavailable']} documents={count} "
+            f"lane={lane} pages={counters['pages']} cursor_resets={counters['cursor_resets']} "
+            f"scan_exhausted={completed} "
+            f"window_start={window_start or 'full-backfill'} "
+            f"inventory={snapshot['inventory']}"
+        )
+        return counters
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
@@ -283,5 +369,6 @@ if __name__ == "__main__":
     parser.add_argument("--db", required=True)
     parser.add_argument("--max-documents", type=int, default=1000)
     parser.add_argument("--lookback-minutes", type=int, default=10)
+    parser.add_argument("--lane", choices=["fast", "backfill"], default="backfill")
     args = parser.parse_args()
-    sync(Path(args.db), max(1, args.max_documents), max(0, args.lookback_minutes))
+    sync(Path(args.db), max(1, args.max_documents), max(0, args.lookback_minutes), lane=args.lane)
