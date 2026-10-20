@@ -282,7 +282,15 @@ def request_json(url, data=None, headers=None, method=None):
             return json.load(response)
     except urllib.error.HTTPError as exc:
         # Never propagate signed URLs, bodies, credentials, or document text to public logs.
-        raise RuntimeError(f"REMOTE_HTTP_{exc.code}") from None
+        suffix = ""
+        if urllib.parse.urlsplit(url).hostname == "oauth2.googleapis.com":
+            try:
+                marker = json.loads(exc.read(16 * 1024)).get("error", "")
+                if marker in {"invalid_grant", "invalid_client", "unauthorized_client", "invalid_scope"}:
+                    suffix = "_" + marker.upper()
+            except (ValueError, AttributeError):
+                pass
+        raise RuntimeError(f"REMOTE_HTTP_{exc.code}" + suffix) from None
     except urllib.error.URLError:
         raise RuntimeError("REMOTE_NETWORK_ERROR") from None
 
@@ -290,7 +298,7 @@ class Drive:
     def __init__(self):
         raw = os.getenv("DRIVE_OAUTH_JSON", "")
         if not raw:
-            config = {k: os.getenv(env, "") for k, env in {
+            config = {k: os.getenv(env, "").strip() for k, env in {
                 "client_id": "GOOGLE_DRIVE_OAUTH_CLIENT_ID",
                 "client_secret": "GOOGLE_DRIVE_OAUTH_CLIENT_SECRET",
                 "refresh_token": "GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN"}.items()}
@@ -298,7 +306,7 @@ class Drive:
                 raise RuntimeError("MISSING_DRIVE_OAUTH_JSON")
             raw = json.dumps(config)
         try:
-            self.config = json.loads(raw)
+            self.config = {k: str(v).strip() for k, v in json.loads(raw).items()}
             if not all(self.config.get(k) for k in ("client_id", "client_secret", "refresh_token")):
                 raise ValueError()
         except (ValueError, TypeError):

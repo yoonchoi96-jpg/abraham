@@ -147,6 +147,26 @@ class IntakeTests(unittest.TestCase):
         finally:
             engine.close()
 
+    def test_oauth_errors_are_actionable_and_never_print_error_description(self):
+        import io
+        import urllib.error
+        from unittest.mock import patch
+        error = urllib.error.HTTPError("https://oauth2.googleapis.com/token", 400, "bad", {},
+            io.BytesIO(b'{"error":"invalid_grant","error_description":"SECRET MUST NOT APPEAR"}'))
+        with patch.object(m.urllib.request, "urlopen", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, r"^REMOTE_HTTP_400_INVALID_GRANT$"):
+                m.request_json("https://oauth2.googleapis.com/token", b"test")
+
+    def test_existing_drive_secrets_are_trimmed_and_used_in_place(self):
+        from unittest.mock import patch
+        values = {"GOOGLE_DRIVE_OAUTH_CLIENT_ID": " client \n",
+                  "GOOGLE_DRIVE_OAUTH_CLIENT_SECRET": " secret \n",
+                  "GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN": " refresh \n"}
+        with patch.dict(os.environ, values, clear=True):
+            drive = m.Drive()
+            self.assertEqual(drive.config["client_id"], "client")
+            self.assertEqual(drive.config["refresh_token"], "refresh")
+
 def large_test():
     m.cloud_guard()
     with tempfile.TemporaryDirectory(dir=os.environ["RUNNER_TEMP"]) as work:
