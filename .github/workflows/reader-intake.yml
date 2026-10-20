@@ -1,0 +1,57 @@
+name: Reader intake — Drive only
+"on":
+  workflow_dispatch:
+    inputs:
+      export_id:
+        description: "Optional existing Reader export ID; empty creates a new export"
+        type: string
+        default: ""
+permissions:
+  contents: read
+concurrency:
+  group: reader-intake-drive-state
+  cancel-in-progress: false
+jobs:
+  intake:
+    # The existing public code repository makes standard hosted Linux compute free.
+    # Private repositories fail closed; never switch to paid/larger/self-hosted runners.
+    if: github.event.repository.private == false && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      READER_PUBLIC_STANDARD_RUNNER: "true"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Require Drive authorization before source access
+        env:
+          DRIVE_OAUTH_JSON: ${{ secrets.DRIVE_OAUTH_JSON }}
+          READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          missing = [k for k in ("DRIVE_OAUTH_JSON", "READWISE_TOKEN") if not os.getenv(k)]
+          if missing:
+              print("Missing repository secrets: " + ", ".join(missing))
+              sys.exit(1)
+          c = json.loads(os.environ["DRIVE_OAUTH_JSON"])
+          if not all(c.get(k) for k in ("client_id", "client_secret", "refresh_token")):
+              sys.exit("DRIVE_OAUTH_JSON requires client_id, client_secret, refresh_token")
+          PY
+      - name: Install official Reader exporter and metadata parser
+        run: |
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+          npm install --global --ignore-scripts @readwise/cli@0.5.10
+      - name: Export, sequentially process and commit private Drive data
+        env:
+          DRIVE_OAUTH_JSON: ${{ secrets.DRIVE_OAUTH_JSON }}
+          READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
+          READER_EXPORT_ID: ${{ inputs.export_id }}
+          READER_DRIVE_FOLDER_ID: ${{ vars.READER_DRIVE_FOLDER_ID }}
+        run: python3 scripts/reader_intake.py --cloud
+      - name: Remove ephemeral authentication
+        if: always()
+        run: rm -f "$HOME/.readwise-cli.json"
+      # No schedule, artifact/cache upload, release assets, data git push, or LLM key.

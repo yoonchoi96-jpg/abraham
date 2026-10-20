@@ -1,0 +1,31 @@
+name: Reader intake zero-cost validation
+"on":
+  pull_request:
+    paths:
+      - "scripts/reader_intake*.py"
+      - ".github/workflows/reader-intake*.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: reader-intake-validation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      READER_PUBLIC_STANDARD_RUNNER: "true"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install safe metadata parser
+        run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+      - name: Verify deduplication, isolation, source preservation and guards
+        run: python3 scripts/reader_intake_test.py
+      - name: Process real synthetic ZIP larger than 3 GiB and rerun it
+        run: python3 scripts/reader_intake_test.py --large
+      # No cache, artifact upload, dataset commits, cloud resources, or AI secrets.
