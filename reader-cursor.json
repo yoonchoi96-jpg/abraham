@@ -6,7 +6,8 @@
   "scanned": 40385,
   "ungraded_queue": "reader-ledgers/2026-10-21T0515KST-ungraded-ids.json",
   "ungraded_count_at_scan": 186,
-  "remaining_ungraded_estimate": 178,
-  "status": "600 rows scanned; 8 queued IDs graded and reverified; 178 pending from this queue",
-  "updated_at": "2026-10-20T21:34:00Z"
+  "graded_from_queue_verified": 10,
+  "remaining_ungraded_estimate": 176,
+  "status": "600 previously scanned rows, 186 queued; 2 previously graded plus 8 newly verified, 176 pending",
+  "updated_at": "2026-10-20T21:38:00Z"
 }
