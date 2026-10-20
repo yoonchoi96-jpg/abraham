@@ -1,13 +1,13 @@
 {
   "version": 1,
   "source": "Readwise Reader Feed",
-  "page_limit": 50,
-  "page_cursor": "01m35ywa6v67prf9xbqp17mner",
-  "scanned": 40385,
+  "page_limit": 100,
+  "page_cursor": "01m34mfx2ftspj3nay0z30c885",
+  "scanned": 40885,
   "ungraded_queue": "reader-ledgers/2026-10-21T0515KST-ungraded-ids.json",
   "ungraded_count_at_scan": 186,
-  "graded_from_queue_verified": 10,
-  "remaining_ungraded_estimate": 176,
-  "status": "600 previously scanned rows, 186 queued; 2 previously graded plus 8 newly verified, 176 pending",
-  "updated_at": "2026-10-20T21:38:00Z"
+  "graded_from_queue_verified": 59,
+  "remaining_ungraded_estimate": 127,
+  "status": "2026-10-21T0721KST: scanned 500 additional seen and legacy-graded docs; reconciled 186 queued IDs, 52 graded before this run (including legacy tags), 7 new grades verified; 127 pending",
+  "updated_at": "2026-10-20T22:30:00Z"
 }
