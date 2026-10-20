@@ -1,0 +1,23 @@
+{
+  "run_id": "2026-10-21T0721KST",
+  "reader_grades_verified": 7,
+  "reader_seen_verified": 7,
+  "reader_grade_counts": {
+    "등급/🟢초록": 4,
+    "등급/🔵파랑": 2,
+    "등급/🟦남색": 1
+  },
+  "drive_source_matches": 9,
+  "drive_ledger_records": 7,
+  "backlog_scanned": 581,
+  "checkpoint_scanned": 40966,
+  "queue_original": 186,
+  "queue_previously_graded": 52,
+  "queue_newly_graded": 7,
+  "queue_remaining": 127,
+  "abraham_receipts": 0,
+  "nav_qa": 0,
+  "obsidian_writes": 0,
+  "zip_downloads": 0,
+  "notes": "Google Docs ledger has seven pre-write records; Reader tag/seen states rechecked independently; Docs post-write receipt append was blocked."
+}
