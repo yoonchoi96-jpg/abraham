@@ -2,10 +2,11 @@
   "version": 1,
   "source": "Readwise Reader Feed",
   "page_limit": 50,
-  "page_cursor": "01m37pj6ew4qdcyypg4p5ry3d2",
-  "scanned": 39785,
-  "last_page_oldest_created_at": "2026-09-24T04:51:40.806269+00:00",
-  "status": "Verified 150 Seen in 3 pages; 0 without grade tags; no Unseen.",
-  "updated_at": "2026-10-20T16:13:00.000Z",
-  "last_verified_page_at": "2026-10-20T16:13:00.000Z"
+  "page_cursor": "01m35ywa6v67prf9xbqp17mner",
+  "scanned": 40385,
+  "ungraded_queue": "reader-ledgers/2026-10-21T0515KST-ungraded-ids.json",
+  "ungraded_count_at_scan": 186,
+  "remaining_ungraded_estimate": 181,
+  "status": "600 pages rows scanned; pending queue remains open",
+  "updated_at": "2026-10-20T21:21:00Z"
 }
