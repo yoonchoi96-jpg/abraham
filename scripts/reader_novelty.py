@@ -21,6 +21,9 @@ MAX_CLAIMS = 32
 MAX_CLAIM_CHARS = 3400
 MIN_CLAIM_CHARS = 18
 TOP_K = 5
+# Old similarity decisions were based on head-only embedding and a single
+# nearest neighbor. Re-evaluate them before they may become review candidates.
+POLICY_REVISION = "v2-all-evidence-multi-candidate-20261021"
 
 
 def claims_from_text(text: str) -> list[str]:
@@ -81,14 +84,39 @@ class NoveltyIndex:
         CREATE INDEX IF NOT EXISTS novelty_v1_hash
             ON novelty_v1(model_id,body_sha256);
         """)
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(novelty_v1)")}
+        if "policy_revision" not in columns:
+            self.db.execute("ALTER TABLE novelty_v1 ADD COLUMN policy_revision TEXT")
+        if "match_body_sha256" not in columns:
+            self.db.execute("ALTER TABLE novelty_v1 ADD COLUMN match_body_sha256 TEXT")
+        self.db.commit()
+
+    def is_current(self, key: str) -> bool:
+        """Old policies or mutated matching originals invalidate dependents."""
+        row = self.db.execute(
+            """SELECT policy_revision,match_key,match_body_sha256
+               FROM novelty_v1 WHERE document_key=? AND model_id=?""",
+            (key, self.model_id)
+        ).fetchone()
+        if not row or row[0] != POLICY_REVISION:
+            return False
+        if not row[1]:
+            return True
+        match = self.db.execute(
+            """SELECT body_sha256 FROM novelty_v1
+               WHERE document_key=? AND model_id=?""",
+            (row[1], self.model_id)
+        ).fetchone()
+        return bool(match and row[2] and match[0] == row[2])
 
     def _top_matches(self, vector, *, exclude):
         matches = []
         cursor = self.db.execute(
             """SELECT document_key, vector, dimensions, body_excerpt, markers
                FROM novelty_v1
-               WHERE model_id=? AND vector IS NOT NULL AND document_key<>?""",
-            (self.model_id, exclude)
+               WHERE model_id=? AND policy_revision=?
+                 AND vector IS NOT NULL AND document_key<>?""",
+            (self.model_id, POLICY_REVISION, exclude)
         )
         # Disk-streaming O(N) search: no full vector library in unified RAM.
         # At the current 12.8k-doc scale this avoids requiring a new ANN
@@ -100,7 +128,7 @@ class NoveltyIndex:
             similarity = float(np.dot(prior, vector))
             if similarity >= 0.84:
                 matches.append((similarity, key, excerpt, markers))
-                matches.sort(key=lambda x: -x[0])
+                matches.sort(key=lambda x: (-x[0], x[1]))
                 if len(matches) > TOP_K:
                     matches.pop()
         return matches
@@ -120,7 +148,8 @@ class NoveltyIndex:
                FROM novelty_v1 WHERE document_key=? AND model_id=?""",
             (key, self.model_id)
         ).fetchone()
-        if already and already[0] == sha and already[1] == stored_title:
+        if (already and already[0] == sha and already[1] == stored_title
+                and self.is_current(key)):
             return dict(zip(("decision", "match_key", "similarity",
                              "coverage", "reason"), already[2:]))
         old = self.db.execute(
@@ -130,12 +159,14 @@ class NoveltyIndex:
         ).fetchone()
         decision, match_key, score, coverage = "novel", None, None, None
         reason = "NO_EQUIVALENT_EVIDENCE"
+        match_sha = None
         vector = None
         markers = critical_markers(body)
         excerpt = body if len(body) <= MAX_BODY_CHARS else body[:MAX_BODY_CHARS]
         if old:
             decision, match_key, score, coverage = "exact_duplicate", old[0], 1.0, 1.0
             reason = "IDENTICAL_EXTRACTED_BODY"
+            match_sha = sha
         elif len(body) > MAX_BODY_CHARS:
             decision, reason = "review_required", "LONG_DOCUMENT_NOT_COMPARED"
         else:
@@ -145,39 +176,77 @@ class NoveltyIndex:
             vector = normalized_embedding(whole[0])
             matches = self._top_matches(vector, exclude=key)
             if matches:
-                score, match_key, other_text, other_markers = matches[0]
-                if score < 0.94:
-                    decision, reason = "novel", "TOPIC_SIMILAR_BUT_NOT_EQUIVALENT"
-                elif markers != set(json.loads(other_markers)):
-                    decision, reason = "novel", "DISTINCT_NUMBERS_QUOTES_OR_NEGATIONS"
-                else:
-                    current_claims, other_claims = claims_from_text(body), claims_from_text(other_text)
+                score, match_key = matches[0][0], matches[0][1]
+                reason = "TOPIC_SIMILAR_BUT_NOT_EQUIVALENT"
+                # A topically similar first hit need not be the best evidence
+                # match. Try the bounded top-k; never combine DIFFERENT
+                # articles' claims into a fabricated single complete source.
+                current_claims = claims_from_text(body)
+                review_needed = False
+                current_vectors = None
+                for candidate_score, candidate_key, other_text, other_markers in matches:
+                    if candidate_score < 0.94:
+                        continue
+                    if markers != set(json.loads(other_markers)):
+                        reason = "DISTINCT_NUMBERS_QUOTES_OR_NEGATIONS"
+                        continue
+                    other_claims = claims_from_text(other_text)
                     if (not current_claims or not other_claims or
                         len(current_claims) > MAX_CLAIMS or len(other_claims) > MAX_CLAIMS or
-                        any(len(s) > MAX_CLAIM_CHARS for s in current_claims + other_claims)):
-                        decision, reason = "review_required", "CLAIMS_TOO_LONG_OR_EMPTY"
-                    else:
-                        vectors = embed(current_claims + other_claims)
-                        if len(vectors) != len(current_claims) + len(other_claims):
+                        any(len(c) > MAX_CLAIM_CHARS for c in current_claims + other_claims)):
+                        review_needed = True
+                        continue
+                    if current_vectors is None:
+                        embedded = embed(current_claims)
+                        if len(embedded) != len(current_claims):
                             raise ValueError("EMBEDDING_COUNT_MISMATCH")
-                        a = np.stack([normalized_embedding(v) for v in vectors[:len(current_claims)]])
-                        b = np.stack([normalized_embedding(v) for v in vectors[len(current_claims):]])
-                        if a.shape[1] != b.shape[1] or a.shape[1] != vector.size:
+                        current_vectors = np.stack([normalized_embedding(v) for v in embedded])
+                        if current_vectors.shape[1] != vector.size:
                             raise ValueError("EMBEDDING_DIMENSIONS_CHANGED")
-                        similarities = a @ b.T
-                        coverage = float(np.mean(np.max(similarities, axis=1) >= 0.96))
-                        if coverage == 1.0 and score >= 0.965:
-                            decision, reason = "redundancy_candidate", "LOCAL_CLAIMS_COVERED"
-                        else:
-                            decision, reason = "novel", "NOVEL_OR_UNCERTAIN_CLAIM"
-        record = (key, self.model_id, sha, str(title)[:500], excerpt,
+                    embedded = embed(other_claims)
+                    if len(embedded) != len(other_claims):
+                        raise ValueError("EMBEDDING_COUNT_MISMATCH")
+                    other_vectors = np.stack([normalized_embedding(v) for v in embedded])
+                    if other_vectors.shape[1] != vector.size:
+                        raise ValueError("EMBEDDING_DIMENSIONS_CHANGED")
+                    similarities = current_vectors @ other_vectors.T
+                    candidate_coverage = float(np.mean(np.max(similarities, axis=1) >= 0.96))
+                    if candidate_coverage == 1.0 and candidate_score >= 0.965:
+                        decision, reason = "redundancy_candidate", "LOCAL_CLAIMS_COVERED"
+                        score, match_key, coverage = candidate_score, candidate_key, candidate_coverage
+                        break
+                    if candidate_key == match_key:
+                        coverage = candidate_coverage
+                        reason = "NOVEL_OR_UNCERTAIN_CLAIM"
+                else:
+                    if review_needed:
+                        decision, reason = "review_required", "CLAIMS_TOO_LONG_OR_EMPTY"
+                if decision == "redundancy_candidate":
+                    matched = self.db.execute(
+                        """SELECT body_sha256 FROM novelty_v1
+                           WHERE document_key=? AND model_id=?""",
+                        (match_key, self.model_id)
+                    ).fetchone()
+                    if not matched:
+                        raise ValueError("MATCH_DISAPPEARED")
+                    match_sha = matched[0]
+                else:
+                    # A novel/review decision does not depend on a particular
+                    # neighbor. Avoid storing a dangling match ID as evidence.
+                    match_key = None
+        record = (key, self.model_id, sha, stored_title, excerpt,
                   json.dumps(sorted(markers), ensure_ascii=False),
                   vector.astype("<f4").tobytes() if vector is not None else None,
                   int(vector.size) if vector is not None else None,
-                  decision, match_key, score, coverage, reason)
+                  decision, match_key, score, coverage, reason,
+                  POLICY_REVISION, match_sha)
         with self.db:
             self.db.execute(
-                """INSERT OR REPLACE INTO novelty_v1 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT OR REPLACE INTO novelty_v1
+                   (document_key,model_id,body_sha256,title,body_excerpt,markers,
+                    vector,dimensions,decision,match_key,similarity,coverage,
+                    reason,policy_revision,match_body_sha256)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 record
             )
         return dict(decision=decision, match_key=match_key,
