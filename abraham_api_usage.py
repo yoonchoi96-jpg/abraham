@@ -6,6 +6,8 @@ Cost calculations require explicit per-million-token rates from the operator.
 from __future__ import annotations
 
 import fcntl
+import threading
+from concurrent.futures import Future
 import json
 import os
 from datetime import datetime, timezone
@@ -81,7 +83,7 @@ def append_record(path: str, record: dict) -> None:
     The log must stay out of publicly tracked files. Existing symlink paths
     are rejected; failures must not interrupt a successful paid API response.
     """
-    target = Path(path).expanduser().resolve(strict=False)
+    target = Path(os.path.abspath(os.path.expanduser(path)))
     target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     if target.is_symlink() or (target.exists() and not target.is_file()):
         raise OSError("USAGE_LOG_PATH_INVALID")
@@ -101,3 +103,36 @@ def append_record(path: str, record: dict) -> None:
                 fcntl.flock(handle, fcntl.LOCK_UN)
     finally:
         os.close(fd)
+
+# In-process single-flight only. Persistent translation cache remains in SQLite.
+_INFLIGHT_LOCK = threading.Lock()
+_INFLIGHT: dict[str, Future] = {}
+
+
+def singleflight(key: str, callback):
+    """Execute identical simultaneous paid requests just once per Python process.
+
+    Failed leaders release the key; there is no permanent response cache and
+    no reuse across distinct payloads/accounts. Followers share the exact
+    response or failure without making additional API requests.
+    """
+    with _INFLIGHT_LOCK:
+        future = _INFLIGHT.get(key)
+        leader = future is None
+        if leader:
+            future = Future()
+            _INFLIGHT[key] = future
+    if not leader:
+        return future.result()
+    try:
+        result = callback()
+    except BaseException as exc:
+        future.set_exception(exc)
+        raise
+    else:
+        future.set_result(result)
+        return result
+    finally:
+        with _INFLIGHT_LOCK:
+            if _INFLIGHT.get(key) is future:
+                del _INFLIGHT[key]
