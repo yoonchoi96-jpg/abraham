@@ -80,12 +80,23 @@ def budget_for(backend, model, context, gear):
         'required_increment_bytes':weights+kv+1024**3,'resident_increment_bytes':None}
 
 
+def required_context(prompt, max_tokens, requested_context):
+    """Bound KV reservation by real prompt bytes + response cap, not worst-case
+    fixed context. UTF-8 bytes conservatively bound tokenizer tokens; leave
+    128 tokens for possible chat template/system framing.
+    """
+    if not 512 <= requested_context <= 4096 or not 1 <= max_tokens <= 512:
+        raise Held('BOUNDED_INFERENCE_REQUIRED')
+    needed = len(prompt.encode('utf-8')) + max_tokens + 128
+    if len(prompt.encode('utf-8')) + max_tokens > requested_context:
+        raise Held('PROMPT_EXCEEDS_CONTEXT')
+    return min(requested_context, max(512, ((needed + 255) // 256) * 256))
+
+
 def infer(backend, model, prompt, *, amando_root, work, context=4096, max_tokens=256):
     if backend not in {'ollama','mlx'} or not 512 <= context <= 4096 or not 1 <= max_tokens <= 512:
         raise Held('BOUNDED_INFERENCE_REQUIRED')
-    if len(prompt.encode()) > context-max_tokens:
-        # Conservative UTF-8 byte upper bound avoids silently truncating evidence.
-        raise Held('PROMPT_EXCEEDS_CONTEXT')
+    allocated_context = required_context(prompt, max_tokens, context)
     import fcntl
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -96,14 +107,14 @@ def infer(backend, model, prompt, *, amando_root, work, context=4096, max_tokens
         except BlockingIOError:
             raise Held('LOCAL_INFERENCE_BUSY') from None
         gear = GearShift(amando_root)
-        budget = budget_for(backend,model,context,gear)
+        budget = budget_for(backend,model,allocated_context,gear)
         before = gear.check(budget)
         started, first, last_check = time.monotonic(), None, time.monotonic()
         pieces, tokens = [], 0
         if backend == 'ollama':
             # Admission established no resident model; request lifetime ownership.
             with ollama('generate', {'model':model,'prompt':prompt,'stream':True,
-                'keep_alive':0,'think':False,'options':{'temperature':0,'seed':1,'num_ctx':context,'num_predict':max_tokens}}) as r:
+                'keep_alive':0,'think':False,'options':{'temperature':0,'seed':1,'num_ctx':allocated_context,'num_predict':max_tokens}}) as r:
                 final = {}
                 for line in r:
                     part = json.loads(line)
@@ -133,7 +144,7 @@ def infer(backend, model, prompt, *, amando_root, work, context=4096, max_tokens
                 mx.random.seed(1)
                 loaded, tokenizer = load(str(Path(model).resolve()), tokenizer_config={'trust_remote_code':False})
                 formatted = tokenizer.apply_chat_template([{'role':'user','content':prompt}], tokenize=False, add_generation_prompt=True, enable_thinking=False) if tokenizer.chat_template else prompt
-                if len(tokenizer.encode(formatted))+max_tokens > context:
+                if len(tokenizer.encode(formatted))+max_tokens > allocated_context:
                     raise Held('PROMPT_EXCEEDS_CONTEXT')
                 gear.check(budget)
                 for part in stream_generate(loaded,tokenizer,prompt=formatted,max_tokens=max_tokens,sampler=make_sampler(temp=0)):
@@ -152,7 +163,7 @@ def infer(backend, model, prompt, *, amando_root, work, context=4096, max_tokens
         after = gear.check(budget, owned=model if backend=='ollama' else None)
         return {'output':''.join(pieces),'backend':backend,'model':model,
             'prompt_sha256':hashlib.sha256(prompt.encode()).hexdigest(),
-            'context':context,'max_tokens':max_tokens,'seed':1,'temperature':0,'thinking':False,
+            'context':allocated_context,'requested_context':context,'max_tokens':max_tokens,'seed':1,'temperature':0,'thinking':False,
             'elapsed_seconds':elapsed,'first_token_seconds':first,'generated_tokens':tokens,
             'tokens_per_total_second':tokens/elapsed,'gearshift_before':before,'gearshift_after':after,
             'additional_api_cost':0}
