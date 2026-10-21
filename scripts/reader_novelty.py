@@ -28,7 +28,10 @@ TOP_K = 5
 MIN_VISIBLE_BODY_CHARS = 40
 # Old similarity decisions were based on head-only embedding and a single
 # nearest neighbor. Re-evaluate them before they may become review candidates.
-POLICY_REVISION = "v9-local-review-lsh-and-chunk-cache-20261021"
+# v9 introduces a separate advisory index and in-process cache only.
+# Its underlying content-judgment policy is unchanged from v8: keep old
+# safe decisions and reuse their existing local embeddings.
+POLICY_REVISION = "v8-multilingual-title-index-20261021"
 
 
 INCOMPLETE_SOURCE_MARKERS = (

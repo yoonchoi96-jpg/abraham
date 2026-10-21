@@ -230,7 +230,8 @@ def enforce_offline_dry_run() -> None:
     socket.socket.connect_ex = guarded_connect_ex
 
 
-def scan(work: Path, *, model: str, embed, max_items: int = 100, retry_held: bool = False) -> dict:
+def scan(work: Path, *, model: str, embed, max_items: int = 100, retry_held: bool = False,
+         review_backfill_limit: int = 5000) -> dict:
     if not 1 <= max_items <= 100000:
         raise ValueError("BOUNDED_SCAN_REQUIRED")
     work = _private_work(work)
@@ -252,6 +253,7 @@ def scan(work: Path, *, model: str, embed, max_items: int = 100, retry_held: boo
     os.chmod(novelty_path, 0o600)
     try:
         index = NoveltyIndex(novelty_db, model_id=model)
+        backfill = index.review.backfill(max_rows=review_backfill_limit)
         novelty_db.execute("""CREATE TABLE IF NOT EXISTS novelty_held (
             document_key TEXT NOT NULL, model_id TEXT NOT NULL,
             reason TEXT NOT NULL,
@@ -323,7 +325,8 @@ def scan(work: Path, *, model: str, embed, max_items: int = 100, retry_held: boo
                 "decisions": index.counts(),
                 "local_embedding_metrics": getattr(embed, "total_stats", None),
                 "deepseek_api_calls": 0, "drive_writes": 0,
-                "automatic_api_suppression": False, "retried_held": retry_held}
+                "automatic_api_suppression": False, "retried_held": retry_held,
+                "review_backfill": backfill}
     finally:
         novelty_db.close()
         bulk_db.close()
@@ -339,6 +342,8 @@ def main():
     p.add_argument("--limit", type=int, default=100)
     p.add_argument("--dry-run", action="store_true",
                    help="Remove paid API keys and block non-local network egress")
+    p.add_argument("--review-backfill-limit", type=int, default=5000,
+                   help="Backfill advisory similarity buckets from existing vectors; no Ollama call")
     p.add_argument("--retry-held", action="store_true",
                    help="Explicitly retry previously held local-only jobs, once per scan")
     args = p.parse_args()
@@ -346,7 +351,8 @@ def main():
         enforce_offline_dry_run()
     embedder = GuardedLocalEmbedder(args.model, args.amando_root)
     result = scan(args.work, model=args.model, embed=embedder,
-                  max_items=args.limit, retry_held=args.retry_held)
+                  max_items=args.limit, retry_held=args.retry_held,
+        review_backfill_limit=args.review_backfill_limit)
     print(json.dumps(result))
 
 

@@ -25,8 +25,13 @@ never adjudicates factual equivalence, nor does it permit article skipping.
 Candidate pools are bounded to 1,024 records and truncation is reported. Since
 this uses the same local embedding model, the cross-lingual quality depends on
 that model actually supporting aligned multilingual embeddings. No download,
-external API or GPU-specific DeepInfer code is required. Previous policy
-records must be reassessed to populate current buckets.
+external API or GPU-specific DeepInfer code is required. Existing v8 novelty assessments remain valid because v9 changes only
+advisory retrieval and caching, not safe-skip eligibility. The scanner
+backfills missing LSH buckets directly from previously stored current-policy
+vectors (default at most 5,000 each run). It makes **zero new Ollama calls**
+for backfilled rows. `--review-backfill-limit 25000` provides a larger explicit
+one-shot bound. This avoids paid inference or repeated local embeddings on
+upgrades.
 
 ## Local embeddings: lazy deduplication and RAM-capped cache
 

@@ -72,6 +72,46 @@ class CrossLanguageReviewIndex:
                  for band,bucket in band_keys(vector)]
             )
 
+    def backfill(self, *, max_rows: int = 5000) -> dict:
+        """Populate new review buckets from existing SAFE stored embeddings.
+
+        Avoid re-inferencing expensive multilingual Ollama vectors on upgrade.
+        Idempotent and bounded; independent review data is derived from the
+        original private SQLite rows. The ordinary v8 decision policy survives.
+        """
+        if not 0 <= max_rows <= 100000:
+            raise ValueError("BOUNDED_REVIEW_BACKFILL_REQUIRED")
+        rows = self.db.execute(
+            """SELECT v.document_key,v.vector,v.dimensions
+               FROM novelty_v1 AS v
+               WHERE v.model_id=? AND v.policy_revision=?
+                 AND v.decision='novel' AND v.vector IS NOT NULL
+                 AND NOT EXISTS (
+                     SELECT 1 FROM novelty_review_bands AS b
+                      WHERE b.model_id=v.model_id
+                        AND b.document_key=v.document_key
+                        AND b.policy_revision=v.policy_revision
+                 )
+               ORDER BY v.document_key LIMIT ?""",
+            (self.model_id,self.policy_revision,max_rows)
+        ).fetchall()
+        built,invalid=0,0
+        for key,raw,dimensions in rows:
+            vector=np.frombuffer(raw,dtype="<f4")
+            if (vector.size!=dimensions or
+                    not np.isfinite(vector).all() or
+                    not 8<=vector.size<=8192):
+                invalid+=1
+                continue
+            with self.db:
+                self.replace(key,vector)
+            built+=1
+        return {"review_buckets_backfilled":built,
+                "invalid_stored_vectors":invalid,
+                "limit":max_rows,
+                "new_ollama_embeddings":0,
+                "deepseek_api_calls":0}
+
     def neighbors(self, key: str, *, limit: int = 5,
                   min_cosine: float = 0.80,
                   max_candidates: int = 1024) -> dict:

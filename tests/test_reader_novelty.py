@@ -815,3 +815,28 @@ def test_local_embedding_cache_respects_opt_out(tmp_path, monkeypatch):
         emb(["No inter-call cache from this model."])
         emb(["No inter-call cache from this model."])
         assert len(calls)==2
+
+
+
+def test_advisory_backfill_reuses_v8_embeddings_without_ollama_calls(tmp_path):
+    import scripts.reader_novelty as module
+    assert module.POLICY_REVISION == "v8-multilingual-title-index-20261021"
+    db=sqlite3.connect(tmp_path / "upgrade-review.sqlite")
+    idx=NoveltyIndex(db,model_id="local-review-upgrade")
+    emb=FakeEmbed()
+    idx.assess("fr","Le gouvernement a annoncé le rapport",FIRST,emb)
+    idx.assess("ar","أعلنت الحكومة عن التقرير",REPHRASE,emb)
+    initial_calls=emb.count
+    assert idx.is_current("fr")
+    db.execute("DELETE FROM novelty_review_bands")
+    db.commit()
+    assert idx.cross_language_review("ar")["candidates"]==[]
+    backfill=idx.review.backfill(max_rows=10)
+    assert backfill["review_buckets_backfilled"]==2
+    assert backfill["new_ollama_embeddings"]==0
+    assert emb.count==initial_calls
+    assert any(x["document_key"]=="fr" for x in
+               idx.cross_language_review("ar")["candidates"])
+    assert idx.review.backfill(max_rows=10)["review_buckets_backfilled"]==0
+    assert idx.is_current("fr")
+    db.close()
