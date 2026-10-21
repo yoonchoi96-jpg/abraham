@@ -25,7 +25,8 @@ def summarize(records, *, model=None, prices=None):
             raise ValueError("INVALID_PRICE")
     groups = defaultdict(lambda: {
         "requests": 0, "known_cache_requests": 0,
-        "unknown_cache_requests": 0, "finish_length": 0,
+        "unknown_cache_requests": 0, "unknown_output_requests": 0,
+        "finish_length": 0,
         **{field: 0 for field in FIELDS},
     })
     for record in records:
@@ -48,6 +49,9 @@ def summarize(records, *, model=None, prices=None):
                 out[field] += value
         else:
             out["unknown_cache_requests"] += 1
+        output_value = record.get("completion_tokens")
+        if type(output_value) is not int or output_value < 0:
+            out["unknown_output_requests"] += 1
         for field in ("prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens"):
             n = record.get(field)
             if type(n) is int and n >= 0:
@@ -60,10 +64,10 @@ def summarize(records, *, model=None, prices=None):
                "known_cache_hit_pct": round(100 * hit / known_prompt, 2)
                if known_prompt else None}
         if prices is not None:
-            if counts["unknown_cache_requests"]:
+            if counts["unknown_cache_requests"] or counts["unknown_output_requests"]:
                 # Cannot meaningfully price unaccounted prompts as cache misses.
                 row["estimated_cost_usd"] = None
-                row["cost_note"] = "unknown_cache_usage_prevents_full_estimate"
+                row["cost_note"] = "unknown_cache_or_output_usage_prevents_full_estimate"
             else:
                 estimated = (hit * prices["cache_hit"] +
                              miss * prices["cache_miss"] +
