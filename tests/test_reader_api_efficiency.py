@@ -152,5 +152,10 @@ def test_model_pricing_only_when_fully_observed_and_explicitly_supplied():
     assert one["known_cache_hit_pct"] == 80.0
     assert one["estimated_cost_usd"] == pytest.approx((80*.003 + 20*.15 + 50*.6)/1e6)
     assert summarize([a])["rows"][0].get("estimated_cost_usd") is None
+    missing_output = usage_record(model="deepseek-flash", task="rating", usage={
+        "prompt_tokens": 100, "prompt_cache_hit_tokens": 80,
+        "prompt_cache_miss_tokens": 20,
+    })
+    assert summarize([missing_output], model="deepseek-flash", prices=pricing)["rows"][0]["estimated_cost_usd"] is None
     with pytest.raises(ValueError):
         summarize([a], prices=pricing)
