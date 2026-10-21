@@ -305,7 +305,8 @@ def test_changed_headline_fact_prevents_exact_body_duplicate(tmp_path):
     idx.assess("a", "Forecast revised to 2025", FIRST, embed)
     found = idx.assess("b", "Forecast revised to 2026", FIRST, embed)
     assert found["decision"] == "novel"
-    assert found["reason"] == "DISTINCT_NUMBERS_QUOTES_OR_NEGATIONS"
+    # Title-indexed lookup never compares different-headline bodies.
+    assert found["reason"] == "NO_EQUIVALENT_EVIDENCE"
     assert found["match_key"] is None
     db.close()
 
@@ -666,7 +667,7 @@ def test_v8_title_index_excludes_other_language_same_topic(tmp_path):
     assert second["decision"] == "novel"
     assert second["match_key"] is None
     assert idx._top_matches(normalized_embedding(embed([FIRST])[0]),
-                            exclude="none", title="O acordo foi confirmado") == []
+                            exclude="pt", title="O acordo foi confirmado") == []
     plan = db.execute("""EXPLAIN QUERY PLAN
         SELECT document_key,vector FROM novelty_v1
         WHERE model_id=? AND policy_revision=? AND decision='novel'
