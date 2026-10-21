@@ -156,3 +156,90 @@ def test_scan_works_on_private_staged_raw_without_mutating_source(tmp_path):
     assert source.read_bytes() == content
     rerun = scan(work, model="test-local", embed=FakeEmbed(), max_items=5)
     assert rerun["evaluated"] == 0
+
+
+def test_revised_document_invalidates_stale_novelty_cache(tmp_path):
+    db = sqlite3.connect(tmp_path / "revision.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    original = idx.assess("stable-drive-id", "Original title", FIRST, embed)
+    assert original["decision"] == "novel"
+    # Same Drive identity, newly appended evidence: old advisory judgment
+    # MUST NOT be reused, even when the semantic model still clusters it.
+    amended = FIRST + " " + ADDITIONAL
+    revised = idx.assess("stable-drive-id", "Original title", amended, embed)
+    assert revised["decision"] == "novel"
+    assert embed.count == 2
+    # Exact-body matching must not return the old version of the same ID.
+    title_changed = idx.assess("stable-drive-id", "Revised title", amended, embed)
+    assert title_changed["decision"] == "novel"
+    assert embed.count == 3
+    # Other IDs can now safely discover the updated complete body.
+    duplicate = idx.assess("other-drive-id", "Revised title", amended, embed)
+    assert duplicate["decision"] == "exact_duplicate"
+    assert duplicate["match_key"] == "stable-drive-id"
+    db.close()
+
+
+def test_failed_revision_does_not_discard_previous_index(tmp_path):
+    db = sqlite3.connect(tmp_path / "rollback.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    first = idx.assess("doc", "Original", FIRST, embed)
+    with pytest.raises(ValueError, match="ZERO_EMBEDDING"):
+        idx.assess("doc", "Revised", FIRST + " " + ADDITIONAL,
+                   lambda texts: [[0.0] * 16 for _ in texts])
+    assert idx.assess("doc", "Original", FIRST, embed) == first
+    db.close()
+
+
+def test_long_multilingual_embedding_preserves_every_byte_in_bounded_batches(tmp_path):
+    from scripts.reader_novelty_scan import (
+        EMBED_BATCH_BYTES, EMBED_CHUNK_BYTES, GuardedLocalEmbedder,
+    )
+    article = "한국어 evidence 文书. " * 480
+    payloads = []
+
+    class Http:
+        def __init__(self, count):
+            self.count = count
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            return False
+        def read(self):
+            return json.dumps({"embeddings": [[1.0] * 16] * self.count}).encode()
+
+    def fake_urlopen(request, timeout):
+        payload = json.loads(request.data)
+        payloads.append(payload)
+        return Http(len(payload["input"]))
+
+    gear = Mock()
+    with patch("scripts.reader_novelty_scan.GearShift", return_value=gear), \\
+         patch("scripts.reader_novelty_scan.budget_for", return_value={"required_increment_bytes": 5}), \\
+         patch("scripts.reader_novelty_scan.urllib.request.urlopen", side_effect=fake_urlopen):
+        e = GuardedLocalEmbedder("existing-model", str(tmp_path))
+        vectors = e([article])
+        assert len(vectors) == 1 and len(vectors[0]) == 16
+        assert e.last_call_stats["truncated_bytes"] == 0
+        assert e.last_call_stats["input_bytes"] == len(article.encode("utf-8"))
+        assert e.last_call_stats["chunks"] > 1
+        assert e.last_call_stats["local_requests"] == len(payloads)
+        assert gear.check.call_count == len(payloads) * 2
+    parts = [part for p in payloads for part in p["input"]]
+    assert "".join(parts) == article
+    assert max(len(part.encode("utf-8")) for part in parts) <= EMBED_CHUNK_BYTES
+    assert all(sum(len(part.encode("utf-8")) for part in p["input"]) <= EMBED_BATCH_BYTES
+               for p in payloads)
+    assert all(p["truncate"] is False and p["keep_alive"] == 0 for p in payloads)
+
+
+def test_unbounded_embedding_request_is_held_not_truncated(tmp_path):
+    from scripts.reader_novelty_scan import GuardedLocalEmbedder
+    with patch("scripts.reader_novelty_scan.GearShift", return_value=Mock()), \\
+         patch("scripts.reader_novelty_scan.urllib.request.urlopen") as urlopen:
+        embed = GuardedLocalEmbedder("existing-model", str(tmp_path))
+        with pytest.raises(Held, match="EMBEDDING_CHUNK_BUDGET_EXCEEDED"):
+            embed(["a" * 400000])
+        urlopen.assert_not_called()
