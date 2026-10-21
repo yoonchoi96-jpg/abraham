@@ -106,3 +106,51 @@ must all be verified before authorizing any DeepSeek suppression.
 
 **No automatic document elimination is enabled.** This PR remains draft,
 with no production rollout and no changes to central GearShift.
+
+
+## Expanded full-candidate review: 31/31 pairs
+
+After the initial 14 pairs, the remaining 17 were reviewed by retrieving
+the four additional local-weather articles and the separate shorter Chinese
+small-business-centers report, and by cross-comparing the already retrieved
+football article bodies. This covers all 31 pairs from the selected
+500-row metadata exploration pass.
+
+| Verdict on pair after source review | Pairs |
+| --- | ---: |
+| Body text exactly identical | 6 |
+| Same reported event, editorial wording differences | 1 |
+| Partial topical overlap with extra detail or distinct source treatment | 6 |
+| Distinct geographic event/conditions despite shared text template | 15 |
+| Extracted body/title quality mismatch | 3 |
+| **Total** | **31** |
+
+The six partial-overlap pairs comprise four initial reporting/commentary pairs
+and two extra matches between the full Chinese ministry-policy release and
+an independently edited shorter government report. The latter reported
+a target of **about 30 specialized-support centers**, absent from the
+3,363-character fuller publication. The difference is material; preserving
+both sources is necessary despite the shared policy topic.
+
+The 15 weather pairs are all combinations of six distinct named cities in
+a Spanish-language daily weather-template feed. Each city's full Reader text
+contains its own forecast; observed high temperatures ranged from 22°C to
+37°C and locality names differed. All 15 are nonduplicates, even where
+headline/summary boilerplate is almost entirely identical.
+
+The three football pairs all involve a problematic extracted article body
+about an earlier referee controversy rather than the qualification event
+announced by its headline. Their candidate status is **source-quality
+review**, not safe article collapse.
+
+**Strict observed-title v5 screen on this set:** seven reviewed pairs share
+the same normalized headline; six have literally identical bodies and one
+is an editorial near-paraphrase. The other 24 pairs have different headlines
+and are not permitted to become v5 semantic-reuse candidates. This is a
+verified deterministic gate result on the reviewed metadata **only**.
+The local embedding/claim-matching engine has NOT been executed on the
+private Reader documents in this conversation. Therefore no empirical
+production model false-positive or false-negative rate is asserted.
+
+There were **zero document deletions** and **zero DeepSeek API requests** in
+the review. Nothing was marked Seen, retagged, or published.
