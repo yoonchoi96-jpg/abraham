@@ -272,3 +272,14 @@ def test_scanner_revisits_mutated_source_without_paid_api(tmp_path):
     row = db.execute("SELECT body_sha256 FROM novelty_v1 WHERE document_key='stable'").fetchone()
     assert row and len(row[0]) == 64
     db.close()
+
+
+def test_rollback_disables_chunked_embeddings_without_truncating(tmp_path, monkeypatch):
+    from scripts.reader_novelty_scan import GuardedLocalEmbedder
+    monkeypatch.setenv("ABRAHAM_NOVELTY_CHUNKED_EMBEDDINGS", "0")
+    with patch("scripts.reader_novelty_scan.GearShift", return_value=Mock()), \
+         patch("scripts.reader_novelty_scan.urllib.request.urlopen") as urlopen:
+        embed = GuardedLocalEmbedder("existing-model", str(tmp_path))
+        with pytest.raises(Held, match="CHUNKED_EMBEDDINGS_DISABLED"):
+            embed(["한국어 " * 2000])
+        urlopen.assert_not_called()
