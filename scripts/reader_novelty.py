@@ -23,7 +23,7 @@ MIN_CLAIM_CHARS = 18
 TOP_K = 5
 # Old similarity decisions were based on head-only embedding and a single
 # nearest neighbor. Re-evaluate them before they may become review candidates.
-POLICY_REVISION = "v2-all-evidence-multi-candidate-20261021"
+POLICY_REVISION = "v3-headline-guards-dependent-signature-20261021"
 
 
 def claims_from_text(text: str) -> list[str]:
@@ -103,16 +103,22 @@ class NoveltyIndex:
         if not row[1]:
             return True
         match = self.db.execute(
-            """SELECT body_sha256 FROM novelty_v1
+            """SELECT body_sha256,title FROM novelty_v1
                WHERE document_key=? AND model_id=?""",
             (row[1], self.model_id)
         ).fetchone()
-        return bool(match and row[2] and match[0] == row[2])
+        return bool(match and row[2] and self._source_signature(*match) == row[2])
+
+    @staticmethod
+    def _source_signature(body_sha256: str, title: str) -> str:
+        return hashlib.sha256(
+            json.dumps([body_sha256, title], ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
 
     def _top_matches(self, vector, *, exclude):
         matches = []
         cursor = self.db.execute(
-            """SELECT document_key, vector, dimensions, body_excerpt, markers
+            """SELECT document_key, vector, dimensions, body_excerpt, markers, title
                FROM novelty_v1
                WHERE model_id=? AND policy_revision=?
                  AND vector IS NOT NULL AND document_key<>?""",
@@ -121,13 +127,13 @@ class NoveltyIndex:
         # Disk-streaming O(N) search: no full vector library in unified RAM.
         # At the current 12.8k-doc scale this avoids requiring a new ANN
         # dependency; index acceleration can be benchmarked separately.
-        for key, raw, dimensions, excerpt, markers in cursor:
+        for key, raw, dimensions, excerpt, markers, headline in cursor:
             if dimensions != vector.size:
                 continue
             prior = np.frombuffer(raw, dtype="<f4")
             similarity = float(np.dot(prior, vector))
             if similarity >= 0.84:
-                matches.append((similarity, key, excerpt, markers))
+                matches.append((similarity, key, excerpt, markers, headline))
                 matches.sort(key=lambda x: (-x[0], x[1]))
                 if len(matches) > TOP_K:
                     matches.pop()
@@ -161,12 +167,19 @@ class NoveltyIndex:
         reason = "NO_EQUIVALENT_EVIDENCE"
         match_sha = None
         vector = None
-        markers = critical_markers(body)
+        markers = critical_markers(title + "\n" + body)
         excerpt = body if len(body) <= MAX_BODY_CHARS else body[:MAX_BODY_CHARS]
         if old:
             decision, match_key, score, coverage = "exact_duplicate", old[0], 1.0, 1.0
             reason = "IDENTICAL_EXTRACTED_BODY"
-            match_sha = sha
+            matched = self.db.execute(
+                """SELECT title FROM novelty_v1
+                   WHERE document_key=? AND model_id=?""",
+                (match_key, self.model_id)
+            ).fetchone()
+            if not matched:
+                raise ValueError("MATCH_DISAPPEARED")
+            match_sha = self._source_signature(sha, matched[0])
         elif len(body) > MAX_BODY_CHARS:
             decision, reason = "review_required", "LONG_DOCUMENT_NOT_COMPARED"
         else:
@@ -181,16 +194,16 @@ class NoveltyIndex:
                 # A topically similar first hit need not be the best evidence
                 # match. Try the bounded top-k; never combine DIFFERENT
                 # articles' claims into a fabricated single complete source.
-                current_claims = claims_from_text(body)
+                current_claims = claims_from_text(title + "\n" + body)
                 review_needed = False
                 current_vectors = None
-                for candidate_score, candidate_key, other_text, other_markers in matches:
+                for candidate_score, candidate_key, other_text, other_markers, other_title in matches:
                     if candidate_score < 0.94:
                         continue
                     if markers != set(json.loads(other_markers)):
                         reason = "DISTINCT_NUMBERS_QUOTES_OR_NEGATIONS"
                         continue
-                    other_claims = claims_from_text(other_text)
+                    other_claims = claims_from_text(other_title + "\n" + other_text)
                     if (not current_claims or not other_claims or
                         len(current_claims) > MAX_CLAIMS or len(other_claims) > MAX_CLAIMS or
                         any(len(c) > MAX_CLAIM_CHARS for c in current_claims + other_claims)):
@@ -223,13 +236,13 @@ class NoveltyIndex:
                         decision, reason = "review_required", "CLAIMS_TOO_LONG_OR_EMPTY"
                 if decision == "redundancy_candidate":
                     matched = self.db.execute(
-                        """SELECT body_sha256 FROM novelty_v1
+                        """SELECT body_sha256,title FROM novelty_v1
                            WHERE document_key=? AND model_id=?""",
                         (match_key, self.model_id)
                     ).fetchone()
                     if not matched:
                         raise ValueError("MATCH_DISAPPEARED")
-                    match_sha = matched[0]
+                    match_sha = self._source_signature(*matched)
                 else:
                     # A novel/review decision does not depend on a particular
                     # neighbor. Avoid storing a dangling match ID as evidence.
