@@ -7,6 +7,7 @@ Semantic redundancy remains a candidate only until independent review.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sqlite3
@@ -165,6 +166,14 @@ def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
             reason TEXT NOT NULL,
             PRIMARY KEY(document_key,model_id)
         )""")
+        # Idempotent resume checks the original source fingerprint rather
+        # than blindly trusting the last decision for a stable Drive ID.
+        # Existing databases migrate automatically, without deleting data.
+        novelty_db.execute("""CREATE TABLE IF NOT EXISTS novelty_source_v1 (
+            document_key TEXT NOT NULL, model_id TEXT NOT NULL,
+            raw_sha256 TEXT NOT NULL, source_name TEXT NOT NULL,
+            PRIMARY KEY(document_key,model_id)
+        )""")
         completed = blocked = 0
         rows = stage_db.execute("""SELECT job_key,drive_file_id FROM stage
             WHERE state IN ('review_required','existing_tag_unverified','duplicate')
@@ -172,11 +181,6 @@ def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
         for key, drive_id in rows:
             if completed + blocked >= max_items:
                 break
-            if novelty_db.execute(
-                "SELECT 1 FROM novelty_v1 WHERE document_key=? AND model_id=?",
-                (key, model)
-            ).fetchone():
-                continue
             if novelty_db.execute(
                 "SELECT 1 FROM novelty_held WHERE document_key=? AND model_id=?",
                 (key, model)
@@ -195,8 +199,24 @@ def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
                 if obj["id"] != drive_id:
                     raise ValueError("SOURCE_METADATA_MISMATCH")
                 name = obj.get("name") or obj["id"] + ".html"
-                doc = parse_document(name, raw.read_bytes())
+                original_bytes = raw.read_bytes()
+                source_sha = hashlib.sha256(original_bytes).hexdigest()
+                prior_source = novelty_db.execute(
+                    """SELECT raw_sha256,source_name FROM novelty_source_v1
+                       WHERE document_key=? AND model_id=?""", (key, model)
+                ).fetchone()
+                if prior_source == (source_sha, name) and novelty_db.execute(
+                    """SELECT 1 FROM novelty_v1
+                       WHERE document_key=? AND model_id=?""", (key, model)
+                ).fetchone():
+                    continue
+                doc = parse_document(name, original_bytes)
                 index.assess(key, doc["title"], doc["content"], embed)
+                with novelty_db:
+                    novelty_db.execute(
+                        """INSERT OR REPLACE INTO novelty_source_v1 VALUES(?,?,?,?)""",
+                        (key, model, source_sha, name)
+                    )
                 completed += 1
             except (Held, ValueError, OSError, RuntimeError):
                 # No source document or exception is put into status/logs.
