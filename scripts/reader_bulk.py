@@ -29,7 +29,7 @@ class DriveSource:
         if not folder or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in folder):
             raise ValueError('INVALID_FOLDER_ID')
         params = {'q': f"'{folder}' in parents and trashed=false",
-                  'pageSize': 100, 'fields': 'nextPageToken,files(id,mimeType,version,modifiedTime,size,shared)'}
+                  'pageSize': 100, 'fields': 'nextPageToken,files(id,name,mimeType,version,modifiedTime,size,shared)'}
         if token:
             params['pageToken'] = token
         return self.drive.api('files', params)
