@@ -175,7 +175,7 @@ class NoveltyIndex:
         cursor = self.db.execute(
             """SELECT document_key, vector, dimensions, body_excerpt, markers, title
                FROM novelty_v1
-               WHERE model_id=? AND policy_revision=?
+               WHERE model_id=? AND policy_revision=? AND decision='novel'
                  AND vector IS NOT NULL AND document_key<>?""",
             (self.model_id, POLICY_REVISION, exclude)
         )
