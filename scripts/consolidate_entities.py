@@ -77,6 +77,7 @@ Entities:
                     contents=prompt,
                     config={
                         "response_mime_type": "application/json",
+                        "usage_task": "entity_canonicalization",
                         "thinking": os.getenv("ABRAHAM_ENTITY_CANONICAL_THINKING", "disabled"),
                         "max_output_tokens": int(os.getenv("ABRAHAM_ENTITY_CANONICAL_MAX_TOKENS", "16384")),
                     },
