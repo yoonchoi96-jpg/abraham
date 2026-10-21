@@ -11,12 +11,60 @@ import json
 import os
 import sqlite3
 import urllib.request
+
+import numpy as np
 from pathlib import Path
 
 from scripts.reader_drive_stage import _private_work
 from scripts.reader_intake import parse_document
 from scripts.reader_local import GearShift, Held, budget_for, required_context
-from scripts.reader_novelty import NoveltyIndex
+from scripts.reader_novelty import NoveltyIndex, normalized_embedding
+
+
+# DeepInfer's chunked-prefill scheduler preserves the entire token sequence
+# while admitting bounded work. This is the analogous *API-side* batching
+# policy for Ollama /api/embed; it is NOT DeepInfer's GPU KV-cache algorithm.
+# We deliberately retain every UTF-8 codepoint: silently embedding only the
+# opening 3,700 characters can miss late-breaking evidence in an article.
+EMBED_CHUNK_BYTES = 3000
+EMBED_BATCH_BYTES = 12000
+EMBED_MAX_INPUTS = 65
+EMBED_MAX_CHUNKS = 128
+
+
+def _utf8_chunks(value: str, max_bytes: int = EMBED_CHUNK_BYTES) -> list[str]:
+    """Bound local model context without truncating any evidence or Unicode."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("NONEMPTY_EMBEDDING_TEXT_REQUIRED")
+    result, current, size = [], [], 0
+    for char in value:
+        encoded = len(char.encode("utf-8"))
+        if current and size + encoded > max_bytes:
+            result.append("".join(current))
+            current, size = [], 0
+        current.append(char)
+        size += encoded
+    if current:
+        result.append("".join(current))
+    return result
+
+
+def _embedding_batches(chunks: list[str]) -> list[list[str]]:
+    """FIFO admission bounded by request bytes and count, no dropped chunks."""
+    batches, current, size = [], [], 0
+    for part in chunks:
+        part_bytes = len(part.encode("utf-8"))
+        if part_bytes > EMBED_BATCH_BYTES:
+            raise ValueError("EMBEDDING_CHUNK_OVER_BUDGET")
+        if current and (len(current) >= EMBED_MAX_INPUTS or
+                        size + part_bytes > EMBED_BATCH_BYTES):
+            batches.append(current)
+            current, size = [], 0
+        current.append(part)
+        size += part_bytes
+    if current:
+        batches.append(current)
+    return batches
 
 
 class GuardedLocalEmbedder:
@@ -25,34 +73,70 @@ class GuardedLocalEmbedder:
             raise ValueError("LOCAL_MODEL_REQUIRED")
         self.model = model
         self.gear = GearShift(amando_root)
+        self.last_call_stats = {}
 
     def __call__(self, texts: list[str]) -> list[list[float]]:
-        if not texts or len(texts) > 65:
+        if not texts or len(texts) > EMBED_MAX_INPUTS:
             raise ValueError("BOUNDED_EMBEDDING_BATCH_REQUIRED")
-        # The same per-batch live GearShift check as other local inference.
-        # Do not reserve 4096 context for a short embedding prompt.
-        context = max(required_context(t[:3700], 1, 4096) for t in texts)
-        budget = budget_for("ollama", self.model, context, self.gear)
-        self.gear.check(budget)
-        inputs = [t[:3700] for t in texts]
-        req = urllib.request.Request(
-            "http://127.0.0.1:11434/api/embed",
-            data=json.dumps({"model": self.model, "input": inputs,
-                             "truncate": False, "keep_alive": 0}).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=240) as resp:
-                data = json.load(resp)
-        except Exception:
-            raise Held("LOCAL_EMBEDDING_UNAVAILABLE") from None
-        vectors = data.get("embeddings", [])
-        if not isinstance(vectors, list) or len(vectors) != len(inputs):
-            raise Held("LOCAL_EMBEDDING_INVALID_RESPONSE")
-        self.gear.check(budget, owned=self.model)
-        return vectors
+        chunks, owner = [], []
+        for index, content in enumerate(texts):
+            parts = _utf8_chunks(content)
+            chunks.extend(parts)
+            owner.extend([index] * len(parts))
+        if len(chunks) > EMBED_MAX_CHUNKS:
+            # Never silently use a prefix for a semantic skip decision.
+            raise Held("EMBEDDING_CHUNK_BUDGET_EXCEEDED")
+        vectors, requests = [], 0
+        for batch in _embedding_batches(chunks):
+            context = max(required_context(t, 1, 4096) for t in batch)
+            budget = budget_for("ollama", self.model, context, self.gear)
+            self.gear.check(budget)
+            req = urllib.request.Request(
+                "http://127.0.0.1:11434/api/embed",
+                data=json.dumps({"model": self.model, "input": batch,
+                                 "truncate": False, "keep_alive": 0}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=240) as resp:
+                    data = json.load(resp)
+            except Exception:
+                raise Held("LOCAL_EMBEDDING_UNAVAILABLE") from None
+            batch_vectors = data.get("embeddings", [])
+            if not isinstance(batch_vectors, list) or len(batch_vectors) != len(batch):
+                raise Held("LOCAL_EMBEDDING_INVALID_RESPONSE")
+            try:
+                vectors.extend(normalized_embedding(v) for v in batch_vectors)
+            except ValueError:
+                raise Held("LOCAL_EMBEDDING_INVALID_RESPONSE") from None
+            self.gear.check(budget, owned=self.model)
+            requests += 1
 
+        # Each document is represented by a byte-weighted, unit-normalized
+        # mean of ALL its chunks. No article suffix is discarded. This is
+        # lossy semantic retrieval only; claim-level evidence verification
+        # still decides whether a candidate can be marked redundant.
+        pooled = [[] for _ in texts]
+        weights = [[] for _ in texts]
+        for index, part, vector in zip(owner, chunks, vectors):
+            pooled[index].append(vector)
+            weights[index].append(len(part.encode("utf-8")))
+        result = []
+        try:
+            for group, sizes in zip(pooled, weights):
+                if len({v.size for v in group}) != 1:
+                    raise ValueError("EMBEDDING_DIMENSIONS_CHANGED")
+                mean = np.average(np.stack(group), axis=0, weights=sizes)
+                result.append(normalized_embedding(mean).tolist())
+        except ValueError:
+            raise Held("LOCAL_EMBEDDING_INVALID_RESPONSE") from None
+        self.last_call_stats = {
+            "texts": len(texts), "chunks": len(chunks), "local_requests": requests,
+            "input_bytes": sum(len(t.encode("utf-8")) for t in texts),
+            "truncated_bytes": 0,
+        }
+        return result
 
 def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
     if not 1 <= max_items <= 100000:
