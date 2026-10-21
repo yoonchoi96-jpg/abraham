@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from scripts.reader_local import Held, required_context
-from scripts.reader_novelty import NoveltyIndex, critical_markers
+from scripts.reader_novelty import NoveltyIndex, critical_markers, normalized_embedding
 from scripts.reader_novelty_scan import GuardedLocalEmbedder, scan
 from scripts.reader_drive_stage import DriveLibraryStager
 
@@ -430,3 +430,74 @@ def test_oversized_headline_is_held_for_review_not_exact_duplicate(tmp_path):
     assert repeated["reason"] == "LONG_HEADLINE_NOT_COMPARED"
     assert repeated["match_key"] is None
     db.close()
+
+
+def test_same_template_different_city_is_not_semantic_duplicate(tmp_path):
+    db = sqlite3.connect(tmp_path / "weather.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    boilerplate = ("The local forecast reports cloudy periods and mild "
+                   "winds throughout the day in this region.")
+    first = idx.assess(
+        "city-a", "Clima hoy en Culiacán México miércoles",
+        boilerplate, embed,
+    )
+    second = idx.assess(
+        "city-b", "Clima hoy en Puebla de Zaragoza México miércoles",
+        boilerplate, embed,
+    )
+    assert first["decision"] == "novel"
+    assert second["decision"] == "novel"
+    assert second["match_key"] is None
+    db.close()
+
+
+def test_renamed_headline_does_not_authorize_new_fact_collapse(tmp_path):
+    db = sqlite3.connect(tmp_path / "actors.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    idx.assess("first", "Company confirms new review",
+               FIRST, embed)
+    second = idx.assess("second", "Company denies new review",
+                        REPHRASE, embed)
+    assert second["decision"] == "novel"
+    assert second["match_key"] is None
+    db.close()
+
+
+def test_semantic_chains_do_not_use_unverified_candidate_as_reference(tmp_path):
+    db = sqlite3.connect(tmp_path / "chains.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    e = FakeEmbed()
+    idx.assess("source", "Computing", FIRST, e)
+    idx.assess("candidate", "Computing", REPHRASE, e)
+    assert idx._top_matches(normalized_embedding(e([FIRST])[0]), exclude="source")
+    matches = idx._top_matches(normalized_embedding(e([FIRST])[0]), exclude="different")
+    assert "candidate" not in [row[1] for row in matches]
+    db.close()
+
+
+def test_dry_run_denies_remote_egress_and_erases_provider_secrets(monkeypatch):
+    import os
+    import socket
+    from scripts.reader_novelty_scan import enforce_offline_dry_run
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-do-not-use")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-do-not-use")
+    def local_stub(self, address):
+        return ("allowed", address)
+    monkeypatch.setattr(socket.socket, "connect", local_stub)
+    enforce_offline_dry_run()
+    assert "DEEPSEEK_API_KEY" not in os.environ
+    assert "GEMINI_API_KEY" not in os.environ
+    sock = socket.socket()
+    try:
+        assert sock.connect(("127.0.0.1", 11434)) == (
+            "allowed", ("127.0.0.1", 11434)
+        )
+        with pytest.raises(Held, match="DRY_RUN_REMOTE_EGRESS_FORBIDDEN"):
+            sock.connect(("api.deepseek.com", 443))
+        with pytest.raises(Held, match="DRY_RUN_REMOTE_EGRESS_FORBIDDEN"):
+            sock.connect(("127.0.0.1", 443))
+    finally:
+        sock.close()
