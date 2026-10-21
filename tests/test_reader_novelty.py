@@ -216,8 +216,8 @@ def test_long_multilingual_embedding_preserves_every_byte_in_bounded_batches(tmp
         return Http(len(payload["input"]))
 
     gear = Mock()
-    with patch("scripts.reader_novelty_scan.GearShift", return_value=gear), \\
-         patch("scripts.reader_novelty_scan.budget_for", return_value={"required_increment_bytes": 5}), \\
+    with patch("scripts.reader_novelty_scan.GearShift", return_value=gear), \
+         patch("scripts.reader_novelty_scan.budget_for", return_value={"required_increment_bytes": 5}), \
          patch("scripts.reader_novelty_scan.urllib.request.urlopen", side_effect=fake_urlopen):
         e = GuardedLocalEmbedder("existing-model", str(tmp_path))
         vectors = e([article])
@@ -237,7 +237,7 @@ def test_long_multilingual_embedding_preserves_every_byte_in_bounded_batches(tmp
 
 def test_unbounded_embedding_request_is_held_not_truncated(tmp_path):
     from scripts.reader_novelty_scan import GuardedLocalEmbedder
-    with patch("scripts.reader_novelty_scan.GearShift", return_value=Mock()), \\
+    with patch("scripts.reader_novelty_scan.GearShift", return_value=Mock()), \
          patch("scripts.reader_novelty_scan.urllib.request.urlopen") as urlopen:
         embed = GuardedLocalEmbedder("existing-model", str(tmp_path))
         with pytest.raises(Held, match="EMBEDDING_CHUNK_BUDGET_EXCEEDED"):
