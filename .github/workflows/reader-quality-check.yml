@@ -1,0 +1,34 @@
+name: Reader quality and local-provider plumbing (synthetic only)
+"on":
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: reader-quality-check-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PROMPTFOO_DISABLE_TELEMETRY: "1"
+      PROMPTFOO_DISABLE_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install offline quality test dependencies
+        run: python3 -m pip install -r requirements.txt -r requirements-reader.txt pytest
+      - name: Regress policy, source retention, checkpoints and failure guards
+        run: |
+          python3 -m pytest -q tests
+          python3 scripts/reader_intake_test.py
+      - name: Install pinned Promptfoo locally
+        run: npm install --ignore-scripts --no-audit --no-fund --no-save promptfoo@0.124.1
+      - name: Synthetic tag provider plumbing only (not gold accuracy)
+        env:
+          PROMPTFOO_PYTHON: python3
+        run: npx --no-install promptfoo eval --no-cache -c evals/reader/smoke.yaml
+      # No private datasets, model inference, secrets, public artifacts or schedules.

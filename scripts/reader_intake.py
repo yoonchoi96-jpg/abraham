@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
-import html
 import json
 import os
 import re
@@ -22,10 +21,14 @@ import urllib.request
 import zipfile
 from collections import Counter
 from datetime import datetime, timezone
-from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 
 import yaml
+
+# Direct script execution and import-based tests share the same policy.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from reader_colors import _processing_gate, _reader_tag_names
+from scripts.reader_quality import extract_html, NearIndex
 
 PIPELINE = "reader-intake-v1"
 CHUNK = 1024 * 1024
@@ -33,8 +36,6 @@ MAX_TEXT = 32 * CHUNK
 MAX_ARCHIVE = 12 * 1024**3
 MAX_EXPANDED = 128 * 1024**3
 MAX_MEMBERS = 250_000
-COLORS = {"orange", "yellow", "green", "blue", "navy", "purple", "gold"}
-ALL_COLORS = COLORS | {"white", "red"}
 
 def json_bytes(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -70,25 +71,6 @@ def canonical_url(value):
     # Preserve query and path semantics: different article/version query strings are not merged.
     return urllib.parse.urlunsplit((p.scheme.lower(), p.netloc.lower(), p.path, p.query, ""))
 
-class HTMLText(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.parts, self.skip = [], 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag in {"script", "style"}:
-            self.skip += 1
-        if tag in {"p", "div", "br", "li", "h1", "h2", "h3"} and not self.skip:
-            self.parts.append("\n")
-
-    def handle_endtag(self, tag):
-        if tag in {"script", "style"}:
-            self.skip = max(0, self.skip - 1)
-
-    def handle_data(self, data):
-        if not self.skip:
-            self.parts.append(data)
-
 def parse_document(name, payload):
     text = payload.decode("utf-8-sig", errors="strict")
     suffix = PurePosixPath(name).suffix.lower()
@@ -101,10 +83,8 @@ def parse_document(name, payload):
         text = value.get("content") or value.get("canonical_text") or value.get("html_content") or ""
         if not isinstance(text, str):
             raise ValueError("INVALID_BODY")
-        if not value.get("content") and value.get("html_content"):
-            p = HTMLText()
-            p.feed(text)
-            text = "".join(p.parts)
+        if (not value.get("content") and value.get("html_content")) or re.search(r"<(?:html|body|article|p|div)[\s>]", text, re.I):
+            text = extract_html(text)
     elif suffix in {".md", ".markdown"}:
         match = re.match(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", text, re.S)
         if match:
@@ -115,9 +95,7 @@ def parse_document(name, payload):
                 raise ValueError("INVALID_FRONTMATTER")
             text = text[match.end():]
     elif suffix in {".html", ".htm"}:
-        p = HTMLText()
-        p.feed(text)
-        text = "".join(p.parts)
+        text = extract_html(text)
     elif suffix != ".txt":
         raise ValueError("UNSUPPORTED_DOCUMENT_TYPE")
     # Retain the exact extracted body; no Unicode/whitespace normalization for the hash.
@@ -128,24 +106,15 @@ def parse_document(name, payload):
         rid = match.group(1) if match else None
     url = canonical_url(meta.get("source_url") or meta.get("url") or "")
     tags = meta.get("tags") or meta.get("readwise_tags") or []
-    if isinstance(tags, dict):
-        tags = list(tags)
     if isinstance(tags, str):
         tags = [x.strip() for x in tags.split(",") if x.strip()]
-    if not isinstance(tags, list):
-        tags = []
-    tags = [str(x) for x in tags]
-    colors = set()
-    for tag in tags:
-        token = re.split(r"[/#:]", tag.lower())[-1].strip()
-        if token in ALL_COLORS:
-            colors.add(token)
-    color = next(iter(colors)) if len(colors) == 1 else None
+    tags = _reader_tag_names({"readwise_tags": tags})
+    color, exportable, _ = _processing_gate({"readwise_tags": tags})
     title = str(meta.get("title") or PurePosixPath(name).stem)
     return {"reader_id": str(rid) if rid is not None else None,
             "url": url, "title": title, "content": text, "tags": tags,
             "source_language": str(meta.get("language") or meta.get("source_language") or ""),
-            "rating": color, "admission": "selected" if color in COLORS else "held"}
+            "rating": color, "admission": "selected" if exportable else "held"}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS docs(
@@ -168,6 +137,7 @@ class Intake:
         self.db = sqlite3.connect(self.db_path)
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(SCHEMA)
+        self.near = NearIndex(self.db)
         if self.db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise RuntimeError("INVALID_PRIOR_STATE")
 
@@ -235,11 +205,14 @@ class Intake:
                                 writer = gzip.open(self.work / name, "wb")
                                 uncompressed = 0
                             cid = "sha256:" + body_hash
+                            near_matches = self.near.add(body_hash, doc["content"])
                             record = {"id": doc["reader_id"] or cid, "canonical_id": cid,
                                       "title": doc["title"], "content": doc["content"],
                                       "source": "readwise", "metadata": {
                                           "readwise_id": doc["reader_id"], "url": doc["url"],
                                           "body_sha256": body_hash, "archive_sha256": sha,
+                                          "near_duplicate_candidates": near_matches,
+                                          "near_duplicate_policy": "advisory-v1-never-merge",
                                           "member_sha256": member_key, "source_language": doc["source_language"]},
                                       "tags": doc["tags"], "rating": doc["rating"],
                                       "admission": doc["admission"], "translation_ko": "",
@@ -258,14 +231,27 @@ class Intake:
                         reason = str(exc) if str(exc) in {
                             "UNSAFE_MEMBER", "TEXT_MEMBER_TOO_LARGE", "IDENTITY_CONTENT_CONFLICT",
                             "INVALID_FRONTMATTER", "METADATA_TOO_LARGE", "INVALID_BODY",
-                            "UNSUPPORTED_JSON_DOCUMENT"} else type(exc).__name__
+                            "UNSUPPORTED_JSON_DOCUMENT", "HTML_EXTRACTION_FAILED"} else type(exc).__name__
                         issues.write(json_bytes({"member": member_key, "reason": reason}).decode()+"\n")
-                        stats["quarantined"] += 1
-                    if stats["members"] % 1000 == 0:
-                        self.db.commit()
+                        stats["deferred_extraction" if reason == "HTML_EXTRACTION_FAILED" else "quarantined"] += 1
+                    # One archive transaction: partial indexes must never reference
+                    # truncated shards after interruption. Bulk checkpoints are per item.
+                if writer:
+                    writer.close()
+                    writer = None
+                # Durable shard bytes precede the index commit.
+                for shard in shards:
+                    with (self.work/shard).open("rb") as durable:
+                        os.fsync(durable.fileno())
+                issues.close()
+                with issues_path.open("rb") as durable:
+                    os.fsync(durable.fileno())
                 self.db.execute("INSERT INTO archives VALUES(?,?,?)",
                                 (sha, archive.stat().st_size, datetime.now(timezone.utc).isoformat()))
                 self.db.commit()
+            except BaseException:
+                self.db.rollback()
+                raise
             finally:
                 if writer:
                     writer.close()
@@ -330,8 +316,17 @@ class Drive:
         return request_json(url, json_bytes(data) if data is not None else None, headers, method)
 
     def list(self, query, fields):
-        return self.api("files", {"q": query, "fields": f"files({fields})",
-                                "pageSize": 1000, "orderBy": "createdTime desc"})["files"]
+        rows, token = [], None
+        while True:
+            params = {"q": query, "fields": f"nextPageToken,files({fields})",
+                      "pageSize": 1000, "orderBy": "createdTime desc"}
+            if token:
+                params["pageToken"] = token
+            page = self.api("files", params)
+            rows.extend(page.get("files", []))
+            token = page.get("nextPageToken")
+            if not token:
+                return rows
 
     def folder(self):
         configured = os.getenv("READER_DRIVE_FOLDER_ID", "")

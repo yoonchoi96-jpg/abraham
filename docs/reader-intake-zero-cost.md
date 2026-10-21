@@ -106,3 +106,11 @@ production 3GB ZIP test = not performed.
 
 Public Actions logs contain only operational codes and aggregate counts.
 No new hourly automation exists.
+
+## Additive quality extensions
+
+See [Reader quality and local evaluation](reader-quality-local-eval.md) for the
+new Trafilatura/MinHash staging path, shared authoritative color parser, optional
+local inference and bulk adapter. The legacy hosted-only ZIP CLI stays manual;
+the separate local evaluator uses only explicit local weights and synthetic or
+privately provided evaluation inputs. No production promotion is implied.

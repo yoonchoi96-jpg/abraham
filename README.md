@@ -100,3 +100,11 @@ Existing SQLite ratings are adopted into the V5 rating stage without another Gem
 - Generated vault files are therefore not accumulated on the phone merely because Abraham processed more documents. Device-level Obsidian Sync selective-sync settings remain available for storage control.
 
 Obsidian Headless is currently an open-beta official client and requires Node.js 22+ and an active Obsidian Sync subscription. It supports one-shot CI synchronization and uses the same Sync encryption/privacy model as the desktop client. The GitHub Actions workflow uses a dedicated device name and serialized concurrency.
+
+## Reader quality and local evaluation
+
+See [Reader quality extensions](docs/reader-quality-local-eval.md) for offline HTML
+extraction, advisory near-duplicate candidates, resumable Drive bulk interfaces,
+optional GearShift-admitted MLX/Ollama inference, and independent human-gold
+Promptfoo evaluation. These remain staging/evaluation paths; no Reader tag write
+or production promotion is added.
