@@ -147,7 +147,7 @@ def main():
     parser = argparse.ArgumentParser(description="Read-only Drive Reader Library staging")
     parser.add_argument("--work", required=True, help="Private persistent LOCAL directory, never a GitHub checkout")
     parser.add_argument("--folder-id", default=DEFAULT_LIBRARY)
-    parser.add_argument("--max-items", type=int, default=1000)
+    parser.add_argument("--max-items", type=int, default=100000)
     parser.add_argument("--status-only", action="store_true")
     parser.add_argument("--rescan", action="store_true",
                         help="Explicitly start a new full scan; preserve all prior keys")
