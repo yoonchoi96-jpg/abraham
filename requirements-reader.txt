@@ -1,0 +1,4 @@
+# Offline quality extensions; no model runtime in the cloud intake.
+PyYAML==6.0.3
+trafilatura==2.3.1
+datasketch==2.0.0

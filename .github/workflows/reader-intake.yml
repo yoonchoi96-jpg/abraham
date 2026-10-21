@@ -42,7 +42,7 @@ jobs:
           PY
       - name: Install official Reader exporter and metadata parser
         run: |
-          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+          python3 -m pip install --disable-pip-version-check -r requirements-reader.txt
           npm install --global --ignore-scripts @readwise/cli@0.5.10
       - name: Export, sequentially process and commit private Drive data
         env:

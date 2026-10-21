@@ -121,8 +121,9 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(doc["admission"], "selected")
         self.assertNotEqual(m.canonical_url("https://example.invalid/a?version=1"),
                             m.canonical_url("https://example.invalid/a?version=2"))
-        doc = m.parse_document("article.html", b"<p>Hello<script>secret()</script></p>")
-        self.assertNotIn("secret", doc["content"])
+        # An undersized HTML fragment is held, never accepted as full text.
+        with self.assertRaisesRegex(ValueError, "HTML_EXTRACTION_FAILED"):
+            m.parse_document("article.html", b"<p>Hello<script>secret()</script></p>")
 
     def test_reject_local_runner(self):
         from unittest.mock import patch

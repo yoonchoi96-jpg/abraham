@@ -2,7 +2,11 @@ name: Reader intake zero-cost validation
 "on":
   pull_request:
     paths:
-      - "scripts/reader_intake*.py"
+      - "scripts/reader_*.py"
+      - "reader_colors.py"
+      - "requirements-reader.txt"
+      - "tests/test_reader_*.py"
+      - "evals/reader/**"
       - ".github/workflows/reader-intake*.yml"
   workflow_dispatch:
 permissions:
@@ -23,9 +27,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Install safe metadata parser
-        run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+        run: python3 -m pip install --disable-pip-version-check -r requirements.txt -r requirements-reader.txt
       - name: Verify deduplication, isolation, source preservation and guards
         run: python3 scripts/reader_intake_test.py
+      - name: Extension regression tests (synthetic, no inference)
+        run: |
+          python3 -m pip install pytest
+          python3 -m pytest -q tests/test_reader_*.py tests/test_color_rules.py
       - name: Process real synthetic ZIP larger than 3 GiB and rerun it
         run: python3 scripts/reader_intake_test.py --large
       # No cache, artifact upload, dataset commits, cloud resources, or AI secrets.

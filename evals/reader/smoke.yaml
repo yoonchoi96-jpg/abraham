@@ -1,0 +1,23 @@
+# Infrastructure smoke ONLY: no accuracy or gold claims.
+description: SYNTHETIC provider plumbing, NOT human gold
+sharing: false
+writeLatestResults: false
+evaluateOptions:
+  maxConcurrency: 1
+providers:
+  - id: file://provider.py
+    config:
+      backend: reader-tags
+prompts:
+  - synthetic
+tests:
+  - vars:
+      tags: '["rating-blue"]'
+    assert:
+      - type: equals
+        value: '{"color": "blue"}'
+  - vars:
+      tags: '["rating-blue", "rating-gold"]'
+    assert:
+      - type: equals
+        value: '{"color": "held"}' 
