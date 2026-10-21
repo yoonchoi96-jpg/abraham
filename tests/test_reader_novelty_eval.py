@@ -6,7 +6,23 @@ import pytest
 
 from scripts.reader_novelty import NoveltyIndex
 from scripts.reader_novelty_eval import evaluate
-from tests.test_reader_novelty import FIRST, REPHRASE, FakeEmbed
+import numpy as np
+
+
+FIRST = ("Researchers documented the energy consumption and thermal reliability "
+         "of the new industrial computing system.")
+REPHRASE = ("The new industrial computing system was documented by researchers "
+            "for its energy consumption and thermal reliability.")
+
+
+class FakeEmbed:
+    def __call__(self, texts):
+        result = []
+        for text in texts:
+            vector = np.zeros(16, dtype=float)
+            vector[0] = 1
+            result.append(vector.tolist())
+        return result
 
 
 def _make(tmp_path):
