@@ -283,3 +283,82 @@ def test_rollback_disables_chunked_embeddings_without_truncating(tmp_path, monke
         with pytest.raises(Held, match="CHUNKED_EMBEDDINGS_DISABLED"):
             embed(["한국어 " * 2000])
         urlopen.assert_not_called()
+
+
+def test_secondary_match_can_prove_candidate_without_using_bad_first_hit(tmp_path):
+    db = sqlite3.connect(tmp_path / "topk.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    idx.assess("a", "Computing", FIRST + " Measured at 300 watts.", embed)
+    idx.assess("c", "Computing", FIRST, embed)
+    found = idx.assess("d", "Computing", REPHRASE, embed)
+    assert found["decision"] == "redundancy_candidate"
+    assert found["match_key"] == "c"
+    assert idx.is_current("d")
+    db.close()
+
+
+def test_changed_headline_fact_prevents_exact_body_duplicate(tmp_path):
+    db = sqlite3.connect(tmp_path / "headline.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    idx.assess("a", "Forecast revised to 2025", FIRST, embed)
+    found = idx.assess("b", "Forecast revised to 2026", FIRST, embed)
+    assert found["decision"] == "novel"
+    assert found["reason"] == "DISTINCT_NUMBERS_QUOTES_OR_NEGATIONS"
+    assert found["match_key"] is None
+    db.close()
+
+
+def test_dependent_candidate_is_stale_when_original_title_changes(tmp_path):
+    db = sqlite3.connect(tmp_path / "dependent.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    idx.assess("a", "Computing", FIRST, embed)
+    candidate = idx.assess("b", "Computing", REPHRASE, embed)
+    assert candidate["decision"] == "redundancy_candidate"
+    assert candidate["match_key"] == "a"
+    assert idx.is_current("b") is True
+    idx.assess("a", "Computing updated headline", FIRST, embed)
+    assert idx.is_current("b") is False
+    old_count = embed.count
+    idx.assess("b", "Computing", REPHRASE, embed)
+    assert embed.count > old_count
+    assert idx.is_current("b") is True
+    db.close()
+
+
+def test_legacy_policy_row_requires_reassessment(tmp_path):
+    db = sqlite3.connect(tmp_path / "legacy.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    idx.assess("a", "Computing", FIRST, embed)
+    with db:
+        db.execute("UPDATE novelty_v1 SET policy_revision='old' WHERE document_key='a'")
+    assert idx.is_current("a") is False
+    before = embed.count
+    result = idx.assess("a", "Computing", FIRST, embed)
+    assert result["decision"] == "novel"
+    assert embed.count > before
+    db.close()
+
+
+def test_explicit_retry_clears_held_marker_after_success(tmp_path):
+    work = tmp_path / "private"
+    stager = DriveLibraryStager(work)
+    source = work / "fixed.source"
+    source.write_bytes(("<article>" + FIRST * 4 + "</article>").encode())
+    stager.process("fixed", {"id": "drive1", "name": "article.html", "version": "1"}, source)
+    stager.close()
+    bulk = sqlite3.connect(work / "bulk.sqlite")
+    bulk.execute("CREATE TABLE jobs(key TEXT PRIMARY KEY, metadata TEXT)")
+    bulk.execute("INSERT INTO jobs VALUES(?,?)", ("fixed", json.dumps(
+        {"id": "drive1", "name": "article.html", "version": "1"})))
+    bulk.commit()
+    bulk.close()
+    failed = scan(work, model="installed-local", embed=lambda texts: (_ for _ in ()).throw(Held("NO_MODEL")), max_items=1)
+    assert failed["held"] == 1
+    assert scan(work, model="installed-local", embed=FakeEmbed(), max_items=1)["evaluated"] == 0
+    success = scan(work, model="installed-local", embed=FakeEmbed(), max_items=1, retry_held=True)
+    assert success["evaluated"] == 1 and success["retried_held"] is True
+    assert scan(work, model="installed-local", embed=FakeEmbed(), max_items=1)["evaluated"] == 0
