@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import unicodedata
 from typing import Callable
 
 import numpy as np
@@ -23,7 +24,25 @@ MIN_CLAIM_CHARS = 18
 TOP_K = 5
 # Old similarity decisions were based on head-only embedding and a single
 # nearest neighbor. Re-evaluate them before they may become review candidates.
-POLICY_REVISION = "v4-entity-and-attribution-guards-20261021"
+POLICY_REVISION = "v5-title-template-guard-20261021"
+
+
+def normalized_title_key(title: str) -> str:
+    """Unicode-safe title identity; no semantic meaning is inferred."""
+    folded = unicodedata.normalize("NFKC", str(title)).casefold()
+    return " ".join("".join(ch if ch.isalnum() else " " for ch in folded).split())
+
+
+def title_supports_semantic_reuse(current: str, prior: str) -> bool:
+    """Fail closed on changed location/actor/event in a near-identical template.
+
+    For v5 only an identical Unicode-normalized headline may nominate a
+    semantic redundancy. Different headlines still enter the novelty index
+    for search and human review; they never authorize a redundancy candidate.
+    This deliberately trades recall for a lower false-skip risk.
+    """
+    key_a, key_b = normalized_title_key(current), normalized_title_key(prior)
+    return bool(key_a and key_a == key_b)
 
 
 def claims_from_text(text: str) -> list[str]:
@@ -241,6 +260,12 @@ class NoveltyIndex:
                 current_vectors = None
                 for candidate_score, candidate_key, other_text, other_markers, other_title in matches:
                     if candidate_score < 0.94:
+                        continue
+                    # An identical weather/news template can refer to a
+                    # DIFFERENT city, person, company, or event. Similarity
+                    # does not license collapsing unmatched headlines.
+                    if not title_supports_semantic_reuse(title, other_title):
+                        reason = "TITLE_ANCHORS_DIFFER"
                         continue
                     if markers != set(json.loads(other_markers)):
                         reason = "DISTINCT_NUMBERS_QUOTES_OR_NEGATIONS"
