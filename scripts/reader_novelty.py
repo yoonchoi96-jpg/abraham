@@ -22,9 +22,10 @@ MAX_CLAIMS = 32
 MAX_CLAIM_CHARS = 3400
 MIN_CLAIM_CHARS = 18
 TOP_K = 5
+MIN_VISIBLE_BODY_CHARS = 40
 # Old similarity decisions were based on head-only embedding and a single
 # nearest neighbor. Re-evaluate them before they may become review candidates.
-POLICY_REVISION = "v6-incomplete-source-protection-20261021"
+POLICY_REVISION = "v7-short-evidence-source-staleness-20261021"
 
 
 INCOMPLETE_SOURCE_MARKERS = (
@@ -47,6 +48,22 @@ def incomplete_source_reason(text: str) -> str | None:
     if any(marker in lowered for marker in INCOMPLETE_SOURCE_MARKERS):
         return "INCOMPLETE_SOURCE_CONTENT"
     return None
+
+
+def visible_body_length(body: str) -> int:
+    """Do not mistake a title, image or list of URLs for a full article."""
+    text = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", body)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"<[^>]*>|https?://\S+", " ", text)
+    return len(re.sub(r"\s+", "", text))
+
+
+def short_claim_keys(text: str) -> set[str]:
+    """Require exact coverage of short lines that embeddings might smooth over."""
+    lines = re.split(r"(?<=[.!?。！？])\s*|\n+", text)
+    return {key for line in lines
+            if 4 <= len(line.strip()) <= 40
+            if (key := normalized_title_key(line)) and 4 <= len(key) <= 30}
 
 
 def normalized_title_key(title: str) -> str:
@@ -87,8 +104,8 @@ def critical_markers(text: str) -> set[str]:
     )}
     # Word boundaries avoid wrongly treating "notable" as English "not".
     english_negations = {
-        x for x in ("not", "never", "denied", "false", "cannot", "can't",
-                    "won't", "without", "no longer")
+        x for x in ("no", "not", "never", "denied", "false", "cannot", "can't",
+                    "won't", "without", "no longer", "isn't", "didn't", "doesn't")
         if re.search(r"(?<!\w)" + re.escape(x) + r"(?!\w)", lowered)
     }
     east_asian_negations = {
@@ -179,11 +196,12 @@ class NoveltyIndex:
         if not row[1]:
             return True
         match = self.db.execute(
-            """SELECT body_sha256,title,policy_revision FROM novelty_v1
+            """SELECT body_sha256,title,policy_revision,decision,match_key FROM novelty_v1
                WHERE document_key=? AND model_id=?""",
             (row[1], self.model_id)
         ).fetchone()
         return bool(match and row[2] and match[2] == POLICY_REVISION
+                    and match[3] == "novel" and match[4] is None
                     and self._source_signature(match[0], match[1]) == row[2])
 
     @staticmethod
@@ -192,7 +210,7 @@ class NoveltyIndex:
             json.dumps([body_sha256, title], ensure_ascii=False).encode("utf-8")
         ).hexdigest()
 
-    def _top_matches(self, vector, *, exclude):
+    def _top_matches(self, vector, *, exclude, title=None):
         matches = []
         cursor = self.db.execute(
             """SELECT document_key, vector, dimensions, body_excerpt, markers, title
@@ -211,7 +229,12 @@ class NoveltyIndex:
             similarity = float(np.dot(prior, vector))
             if similarity >= 0.84:
                 matches.append((similarity, key, excerpt, markers, headline))
-                matches.sort(key=lambda x: (-x[0], x[1]))
+                # Avoid crowding out an exact-title original with five
+                # different-city same-template documents in TOP_K.
+                matches.sort(key=lambda x: (
+                    -int(title is not None and
+                         title_supports_semantic_reuse(title, x[4])),
+                    -x[0], x[1]))
                 if len(matches) > TOP_K:
                     matches.pop()
         return matches
@@ -253,6 +276,8 @@ class NoveltyIndex:
         incomplete = incomplete_source_reason(body)
         if incomplete:
             decision, reason = "review_required", incomplete
+        elif visible_body_length(body) < MIN_VISIBLE_BODY_CHARS:
+            decision, reason = "review_required", "INSUFFICIENT_EXTRACTED_BODY"
         elif old:
             decision, match_key, score, coverage = "exact_duplicate", old[0], 1.0, 1.0
             reason = "IDENTICAL_EXTRACTED_BODY"
@@ -273,7 +298,7 @@ class NoveltyIndex:
             if len(whole) != 1:
                 raise ValueError("EMBEDDING_COUNT_MISMATCH")
             vector = normalized_embedding(whole[0])
-            matches = self._top_matches(vector, exclude=key)
+            matches = self._top_matches(vector, exclude=key, title=title)
             if matches:
                 score, match_key = matches[0][0], matches[0][1]
                 reason = "TOPIC_SIMILAR_BUT_NOT_EQUIVALENT"
@@ -300,6 +325,13 @@ class NoveltyIndex:
                         len(current_claims) > MAX_CLAIMS or len(other_claims) > MAX_CLAIMS or
                         any(len(c) > MAX_CLAIM_CHARS for c in current_claims + other_claims)):
                         review_needed = True
+                        continue
+                    # Four-character Korean/Chinese or two-word English
+                    # updates may fall below claim-embedding thresholds.
+                    # Never treat an unmatched short source statement as covered.
+                    if not short_claim_keys(title + "\n" + body).issubset(
+                            short_claim_keys(other_title + "\n" + other_text)):
+                        reason = "DISTINCT_SHORT_CLAIM"
                         continue
                     if current_vectors is None:
                         embedded = embed(current_claims)
@@ -416,6 +448,6 @@ class NoveltyIndex:
 
     def counts(self) -> dict:
         return dict(self.db.execute(
-            "SELECT decision, COUNT(*) FROM novelty_v1 WHERE model_id=? GROUP BY decision",
-            (self.model_id,)
+            "SELECT decision, COUNT(*) FROM novelty_v1 WHERE model_id=? AND policy_revision=? GROUP BY decision",
+            (self.model_id, POLICY_REVISION)
         ).fetchall())

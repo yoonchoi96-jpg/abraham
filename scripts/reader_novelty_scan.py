@@ -159,6 +159,7 @@ def enforce_offline_dry_run() -> None:
     for secret in ("DEEPSEEK_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"):
         os.environ.pop(secret, None)
     original_connect = socket.socket.connect
+    original_connect_ex = socket.socket.connect_ex
 
     def guarded_connect(sock, address):
         if (isinstance(address, tuple) and len(address) >= 2
@@ -167,7 +168,16 @@ def enforce_offline_dry_run() -> None:
             return original_connect(sock, address)
         raise Held("DRY_RUN_REMOTE_EGRESS_FORBIDDEN")
 
+    def guarded_connect_ex(sock, address):
+        if (sock.family in (socket.AF_INET, socket.AF_INET6)
+                and isinstance(address, tuple) and len(address) >= 2
+                and address[0] in ("127.0.0.1", "::1")
+                and address[1] == 11434):
+            return original_connect_ex(sock, address)
+        raise Held("DRY_RUN_REMOTE_EGRESS_FORBIDDEN")
+
     socket.socket.connect = guarded_connect
+    socket.socket.connect_ex = guarded_connect_ex
 
 
 def scan(work: Path, *, model: str, embed, max_items: int = 100, retry_held: bool = False) -> dict:

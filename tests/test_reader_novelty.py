@@ -546,3 +546,87 @@ def test_valid_duplicate_does_not_chain_via_duplicate_source(tmp_path):
     assert d2["decision"] == d3["decision"] == "exact_duplicate"
     assert d3["match_key"] == "original"
     db.close()
+
+
+
+def test_title_only_reader_excerpts_never_authorize_reuse(tmp_path):
+    db = sqlite3.connect(tmp_path / "tiny-excerpt.sqlite")
+    ix = NoveltyIndex(db, model_id="fake-embed")
+    emb = FakeEmbed()
+    first = ix.assess("t1", "Company announces change", "Company announces change", emb)
+    repeat = ix.assess("t2", "Company announces change", "Company announces change", emb)
+    assert first["decision"] == repeat["decision"] == "review_required"
+    assert repeat["reason"] == "INSUFFICIENT_EXTRACTED_BODY"
+    assert repeat["match_key"] is None
+    assert emb.count == 0
+    db.close()
+
+
+def test_image_link_only_article_not_a_confirmed_duplicate(tmp_path):
+    db = sqlite3.connect(tmp_path / "image-shell.sqlite")
+    ix = NoveltyIndex(db, model_id="fake-embed")
+    body = "![Figure](https://example.invalid/img.jpg)" + (
+        "[X](https://example.invalid/link)" * 16)
+    first = ix.assess("a", "Industrial technologies", body, FakeEmbed())
+    second = ix.assess("b", "Industrial technologies", body, FakeEmbed())
+    assert first["reason"] == second["reason"] == "INSUFFICIENT_EXTRACTED_BODY"
+    assert second["decision"] == "review_required"
+    db.close()
+
+
+def test_four_character_chinese_profit_reversal_not_ignored(tmp_path):
+    db = sqlite3.connect(tmp_path / "short-claim.sqlite")
+    ix = NoveltyIndex(db, model_id="fake-embed")
+    emb = FakeEmbed()
+    prior = ix.assess("prior", "Manufacturing", FIRST + "\n利润上涨", emb)
+    later = ix.assess("later", "Manufacturing", REPHRASE + "\n利润下跌", emb)
+    assert prior["decision"] == later["decision"] == "novel"
+    assert later["reason"] == "DISTINCT_SHORT_CLAIM"
+    assert later["match_key"] is None
+    db.close()
+
+
+def test_matching_headline_survives_crowded_similar_topic(tmp_path):
+    db = sqlite3.connect(tmp_path / "crowded.sqlite")
+    ix = NoveltyIndex(db, model_id="fake-embed")
+    emb = FakeEmbed()
+    ix.assess("z-original", "Computing", FIRST, emb)
+    for n in range(7):
+        ix.assess(f"a-distractor-{n}", f"Forecast for City {n}", FIRST, emb)
+    candidate = ix.assess("new-copy", "Computing", REPHRASE, emb)
+    assert candidate["decision"] == "redundancy_candidate"
+    assert candidate["match_key"] == "z-original"
+    db.close()
+
+
+def test_source_status_change_invalidates_dependent_even_if_hash_same(tmp_path):
+    db = sqlite3.connect(tmp_path / "stale-source-status.sqlite")
+    ix = NoveltyIndex(db, model_id="fake-embed")
+    ix.assess("source", "Computing", FIRST, FakeEmbed())
+    ix.assess("copy", "Computing", FIRST, FakeEmbed())
+    assert ix.is_current("copy")
+    db.execute("UPDATE novelty_v1 SET decision='review_required' WHERE document_key='source'")
+    db.commit()
+    assert not ix.is_current("copy")
+    assert ix.evidence_cards("copy", FakeEmbed())["state"] == "stale_or_missing"
+    db.close()
+
+
+def test_explicit_no_negation_is_not_missed():
+    assert "negation:no" in critical_markers("There is no signed contract.")
+    assert "negation:no" not in critical_markers("Researchers noted the contract.")
+
+
+def test_dry_run_connect_ex_cannot_bypass_paid_provider_guard(monkeypatch):
+    import socket
+    from scripts.reader_novelty_scan import enforce_offline_dry_run
+    monkeypatch.setattr(socket.socket, "connect", lambda self, a: "ok")
+    monkeypatch.setattr(socket.socket, "connect_ex", lambda self, a: 0)
+    enforce_offline_dry_run()
+    sock = socket.socket()
+    try:
+        assert sock.connect_ex(("127.0.0.1", 11434)) == 0
+        with pytest.raises(Held, match="DRY_RUN_REMOTE_EGRESS_FORBIDDEN"):
+            sock.connect_ex(("api.deepseek.com", 443))
+    finally:
+        sock.close()

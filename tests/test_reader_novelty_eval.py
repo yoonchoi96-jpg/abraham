@@ -96,3 +96,19 @@ def test_invalid_or_duplicate_labels_are_rejected(tmp_path, rows):
     gold = _labels(tmp_path, rows)
     with pytest.raises(ValueError, match="INVALID_GOLD_ITEM|INVALID_GOLD_FIELDS"):
         evaluate(path, gold, model_id="test-embedding")
+
+
+
+def test_independent_gold_excludes_candidates_with_reclassified_origin(tmp_path):
+    db_path = _make(tmp_path)
+    db = sqlite3.connect(db_path)
+    db.execute("UPDATE novelty_v1 SET decision='review_required' WHERE document_key='source'")
+    db.commit()
+    db.close()
+    labels = _labels(tmp_path, [
+        {"document_key": "candidate", "expected": "novel", "risk": "high"},
+    ])
+    result = evaluate(db_path, labels, model_id="test-embedding")
+    assert result["missing_or_stale"] == 1
+    assert result["candidate_positive"] == 0
+    assert result["scoreable"] == 0
