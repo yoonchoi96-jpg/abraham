@@ -20,7 +20,7 @@ from scripts.reader_bulk import Bulk, DriveSource
 from scripts.reader_intake import Drive, parse_document
 from scripts.reader_quality import NearIndex
 
-DEFAULT_LIBRARY = "1KIsyDd_EUJuDxMIvrnIvi2VWriaxaB2U"
+DEFAULT_LIBRARY = "1HokbvlhxZsvFqF9aqTINEscNy3m0liOJ"
 COLOR_BY_KOREAN = {
     "⚪하양": "white", "⚪흰색": "white", "🔴빨강": "red",
     "🟠주황": "orange", "🟡노랑": "yellow",
@@ -162,6 +162,10 @@ def main():
             if args.rescan:
                 bulk.start_scan()
             result = bulk.run(DriveSource(Drive()), stage.process, max_items=args.max_items)
+            if result["discovery_complete"] and bulk.db.execute(
+                "SELECT COUNT(*) FROM jobs"
+            ).fetchone()[0] == 0:
+                raise RuntimeError("EMPTY_DRIVE_LIBRARY_SOURCE_CHECK_FOLDER_ID")
             print(json.dumps({
                 "run": result, "staging": stage.status(),
                 "drive_writes": 0, "reader_api_writes": 0,
