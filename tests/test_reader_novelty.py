@@ -416,3 +416,16 @@ def test_uncertainty_cues_are_preserved_in_semantic_candidates(tmp_path):
     assert "attribution:reportedly" in critical_markers(uncertain)
     assert "negation:not" not in critical_markers("The notable findings were published.")
     db.close()
+
+
+def test_oversized_headline_is_held_for_review_not_exact_duplicate(tmp_path):
+    db = sqlite3.connect(tmp_path / "longtitle.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    first = idx.assess("a", "A" * 600, FIRST, embed)
+    repeated = idx.assess("b", "A" * 599 + "B", FIRST, embed)
+    assert first["decision"] == "review_required"
+    assert repeated["decision"] == "review_required"
+    assert repeated["reason"] == "LONG_HEADLINE_NOT_COMPARED"
+    assert repeated["match_key"] is None
+    db.close()
