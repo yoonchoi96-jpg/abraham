@@ -1,0 +1,20 @@
+{
+  "run_id": "2026-10-21T1220KST",
+  "source_ledger": "reader-ledgers/2026-10-21T1220KST-staged-a.jsonl",
+  "verification": "Reader API reread",
+  "verified_document_ids": [
+    "01m377a1e61crssw6qe5z5mm4q",
+    "01m3778gem7m1snga4jpnnb1f2",
+    "01m3778gcr2pgda9g9ra3b9z3g",
+    "01m3778g9hhjyrx7aywph7cap7",
+    "01m3778g6kh6c0bccny52q9d8d",
+    "01m3778g4sw0gxzfp3bwh8t8cf"
+  ],
+  "tag_verified_count": 6,
+  "seen_verified_count": 6,
+  "seen_changed_count": 0,
+  "abraham_status": "NOT_SENT",
+  "nav_status": "NOT_SENT",
+  "obsidian_status": "BLOCKED",
+  "note": "Staged-a status update blocked; this independent receipt records verification."
+}
