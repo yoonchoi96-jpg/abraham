@@ -1,0 +1,23 @@
+{
+  "run_id": "2026-10-21T1220KST",
+  "verified_reader_tags": 12,
+  "verified_seen": 12,
+  "new_seen": 0,
+  "grade_counts": {
+    "red": 2,
+    "yellow": 1,
+    "green": 4,
+    "blue": 3,
+    "indigo": 2
+  },
+  "abraham_pending": 5,
+  "abraham_completed": 0,
+  "nav_completed": 0,
+  "obsidian_completed": 0,
+  "cursor_scanned": 40966,
+  "source_ledgers": [
+    "reader-ledgers/2026-10-21T1220KST-staged-a.jsonl",
+    "reader-ledgers/2026-10-21T1220KST-staged-b.jsonl"
+  ],
+  "source_receipt": "reader-ledgers/2026-10-21T1220KST-receipt-a.json"
+}
