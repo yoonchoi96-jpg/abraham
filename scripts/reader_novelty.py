@@ -24,7 +24,29 @@ MIN_CLAIM_CHARS = 18
 TOP_K = 5
 # Old similarity decisions were based on head-only embedding and a single
 # nearest neighbor. Re-evaluate them before they may become review candidates.
-POLICY_REVISION = "v5-title-template-guard-20261021"
+POLICY_REVISION = "v6-incomplete-source-protection-20261021"
+
+
+INCOMPLETE_SOURCE_MARKERS = (
+    "some content could not be imported from the original document",
+    "subscribe to continue reading",
+    "sign in or subscribe to continue reading",
+    "to read the full article, subscribe",
+    "this article is for subscribers only",
+    "full article is available to subscribers",
+    "付费阅读",
+    "付費閱讀",
+    "订阅后阅读全文",
+    "訂閱後閱讀",
+)
+
+
+def incomplete_source_reason(text: str) -> str | None:
+    """Do not treat a paywall preview or damaged Reader extraction as complete."""
+    lowered = text.casefold()
+    if any(marker in lowered for marker in INCOMPLETE_SOURCE_MARKERS):
+        return "INCOMPLETE_SOURCE_CONTENT"
+    return None
 
 
 def normalized_title_key(title: str) -> str:
@@ -217,7 +239,7 @@ class NoveltyIndex:
         if len(str(title)) <= 500:
             old = self.db.execute(
                 """SELECT document_key FROM novelty_v1
-                   WHERE model_id=? AND policy_revision=?
+                   WHERE model_id=? AND policy_revision=? AND decision='novel'
                      AND body_sha256=? AND title=?
                      AND document_key<>? LIMIT 1""",
                 (self.model_id, POLICY_REVISION, sha, stored_title, key)
@@ -228,7 +250,10 @@ class NoveltyIndex:
         vector = None
         markers = critical_markers(title + "\n" + body)
         excerpt = body if len(body) <= MAX_BODY_CHARS else body[:MAX_BODY_CHARS]
-        if old:
+        incomplete = incomplete_source_reason(body)
+        if incomplete:
+            decision, reason = "review_required", incomplete
+        elif old:
             decision, match_key, score, coverage = "exact_duplicate", old[0], 1.0, 1.0
             reason = "IDENTICAL_EXTRACTED_BODY"
             matched = self.db.execute(
