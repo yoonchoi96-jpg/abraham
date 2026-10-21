@@ -347,7 +347,8 @@ def test_explicit_retry_clears_held_marker_after_success(tmp_path):
     work = tmp_path / "private"
     stager = DriveLibraryStager(work)
     source = work / "fixed.source"
-    source.write_bytes(("<article>" + FIRST * 4 + "</article>").encode())
+    source.write_bytes(("<html><body><article><p>" + FIRST * 4 +
+                        "</p></article></body></html>").encode())
     stager.process("fixed", {"id": "drive1", "name": "article.html", "version": "1"}, source)
     stager.close()
     bulk = sqlite3.connect(work / "bulk.sqlite")
