@@ -383,3 +383,36 @@ def test_evidence_cards_quote_real_source_and_detect_staleness(tmp_path):
         "state": "stale_or_missing", "cards": [],
     }
     db.close()
+
+
+def test_changed_company_name_blocks_semantic_false_skip(tmp_path):
+    db = sqlite3.connect(tmp_path / "entities.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    emb = FakeEmbed()
+    original = ("Apple announced a new enterprise infrastructure agreement "
+                "after an independent review of regulatory filings.")
+    altered = ("Microsoft announced a new enterprise infrastructure agreement "
+               "after an independent review of regulatory filings.")
+    idx.assess("apple", "Technology agreement", original, emb)
+    result = idx.assess("microsoft", "Technology agreement", altered, emb)
+    assert result["decision"] == "novel"
+    assert result["reason"] == "DISTINCT_NUMBERS_QUOTES_OR_NEGATIONS"
+    assert "entity:apple" in critical_markers(original)
+    assert "entity:microsoft" in critical_markers(altered)
+    db.close()
+
+
+def test_uncertainty_cues_are_preserved_in_semantic_candidates(tmp_path):
+    db = sqlite3.connect(tmp_path / "attribution.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    emb = FakeEmbed()
+    first = ("Officials confirmed the factory will close after the next "
+             "operational inspection in the region.")
+    uncertain = ("Officials reportedly confirmed the factory will close after "
+                 "the next operational inspection in the region.")
+    idx.assess("certain", "Factory decision", first, emb)
+    result = idx.assess("uncertain", "Factory decision", uncertain, emb)
+    assert result["decision"] == "novel"
+    assert "attribution:reportedly" in critical_markers(uncertain)
+    assert "negation:not" not in critical_markers("The notable findings were published.")
+    db.close()
