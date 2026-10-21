@@ -261,14 +261,14 @@ class NoveltyIndex:
                 for candidate_score, candidate_key, other_text, other_markers, other_title in matches:
                     if candidate_score < 0.94:
                         continue
-                    # An identical weather/news template can refer to a
-                    # DIFFERENT city, person, company, or event. Similarity
-                    # does not license collapsing unmatched headlines.
-                    if not title_supports_semantic_reuse(title, other_title):
-                        reason = "TITLE_ANCHORS_DIFFER"
-                        continue
                     if markers != set(json.loads(other_markers)):
                         reason = "DISTINCT_NUMBERS_QUOTES_OR_NEGATIONS"
+                        continue
+                    # Identical weather/news templates can refer to DIFFERENT
+                    # cities, people or events. Topic similarity alone is not
+                    # a warrant to suppress a source.
+                    if not title_supports_semantic_reuse(title, other_title):
+                        reason = "TITLE_ANCHORS_DIFFER"
                         continue
                     other_claims = claims_from_text(other_title + "\n" + other_text)
                     if (not current_claims or not other_claims or
