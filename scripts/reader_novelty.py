@@ -194,13 +194,15 @@ class NoveltyIndex:
                 and self.is_current(key)):
             return dict(zip(("decision", "match_key", "similarity",
                              "coverage", "reason"), already[2:]))
-        old = self.db.execute(
-            """SELECT document_key FROM novelty_v1
-               WHERE model_id=? AND policy_revision=?
-                 AND body_sha256=? AND title=?
-                 AND document_key<>? LIMIT 1""",
-            (self.model_id, POLICY_REVISION, sha, stored_title, key)
-        ).fetchone()
+        old = None
+        if len(str(title)) <= 500:
+            old = self.db.execute(
+                """SELECT document_key FROM novelty_v1
+                   WHERE model_id=? AND policy_revision=?
+                     AND body_sha256=? AND title=?
+                     AND document_key<>? LIMIT 1""",
+                (self.model_id, POLICY_REVISION, sha, stored_title, key)
+            ).fetchone()
         decision, match_key, score, coverage = "novel", None, None, None
         reason = "NO_EQUIVALENT_EVIDENCE"
         match_sha = None
@@ -218,6 +220,8 @@ class NoveltyIndex:
             if not matched:
                 raise ValueError("MATCH_DISAPPEARED")
             match_sha = self._source_signature(sha, matched[0])
+        elif len(str(title)) > 500:
+            decision, reason = "review_required", "LONG_HEADLINE_NOT_COMPARED"
         elif len(body) > MAX_BODY_CHARS:
             decision, reason = "review_required", "LONG_DOCUMENT_NOT_COMPARED"
         else:
