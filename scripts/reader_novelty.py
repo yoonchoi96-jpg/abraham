@@ -109,19 +109,24 @@ class NoveltyIndex:
                embed: Callable[[list[str]], list[list[float]]]) -> dict:
         if not key or not isinstance(body, str) or not body.strip():
             raise ValueError("NONEMPTY_DOCUMENT_REQUIRED")
+        # A Reader item may gain new paragraphs or change its title in place.
+        # Cached decisions are valid only for the exact assessed input, never
+        # merely for a stable Drive/document ID. Preserve the previous record
+        # until the *new* inference finishes and can commit atomically.
+        sha = hashlib.sha256(body.encode()).hexdigest()
+        stored_title = str(title)[:500]
         already = self.db.execute(
-            """SELECT decision,match_key,similarity,coverage,reason FROM novelty_v1
-               WHERE document_key=? AND model_id=?""",
+            """SELECT body_sha256,title,decision,match_key,similarity,coverage,reason
+               FROM novelty_v1 WHERE document_key=? AND model_id=?""",
             (key, self.model_id)
         ).fetchone()
-        if already:
+        if already and already[0] == sha and already[1] == stored_title:
             return dict(zip(("decision", "match_key", "similarity",
-                             "coverage", "reason"), already))
-        sha = hashlib.sha256(body.encode()).hexdigest()
+                             "coverage", "reason"), already[2:]))
         old = self.db.execute(
             """SELECT document_key FROM novelty_v1
-               WHERE model_id=? AND body_sha256=? LIMIT 1""",
-            (self.model_id, sha)
+               WHERE model_id=? AND body_sha256=? AND document_key<>? LIMIT 1""",
+            (self.model_id, sha, key)
         ).fetchone()
         decision, match_key, score, coverage = "novel", None, None, None
         reason = "NO_EQUIVALENT_EVIDENCE"
@@ -172,7 +177,7 @@ class NoveltyIndex:
                   decision, match_key, score, coverage, reason)
         with self.db:
             self.db.execute(
-                """INSERT OR IGNORE INTO novelty_v1 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT OR REPLACE INTO novelty_v1 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 record
             )
         return dict(decision=decision, match_key=match_key,
