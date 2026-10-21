@@ -18,6 +18,7 @@ import numpy as np
 
 MAX_BODY_CHARS = 40000
 MAX_CLAIMS = 32
+MAX_CLAIM_CHARS = 3400
 MIN_CLAIM_CHARS = 18
 TOP_K = 5
 
@@ -31,7 +32,7 @@ def critical_markers(text: str) -> set[str]:
     # Differences in numbers, times, quantitative units, explicit quotes and
     # negation cues mean "new/possibly conflicting evidence" regardless of sim.
     numbers = {m.lower() for m in re.findall(
-        r"(?<!\w)\d+(?:[.,]\d+)*(?:%|％|억|만|조|bn|million|billion|년|월|일|원|달러)?", text
+        r"\d+(?:[.,]\d+)*(?:%|％|억|만|조|bn|million|billion|년|월|일|원|달러)?", text
     )}
     quoted = {m.casefold() for m in re.findall(
         r'["“「『]([^"”」』]{3,120})["”」』]', text
@@ -147,7 +148,8 @@ class NoveltyIndex:
                 else:
                     current_claims, other_claims = claims_from_text(body), claims_from_text(other_text)
                     if (not current_claims or not other_claims or
-                        len(current_claims) > MAX_CLAIMS or len(other_claims) > MAX_CLAIMS):
+                        len(current_claims) > MAX_CLAIMS or len(other_claims) > MAX_CLAIMS or
+                        any(len(s) > MAX_CLAIM_CHARS for s in current_claims + other_claims)):
                         decision, reason = "review_required", "CLAIMS_TOO_LONG_OR_EMPTY"
                     else:
                         vectors = embed(current_claims + other_claims)
