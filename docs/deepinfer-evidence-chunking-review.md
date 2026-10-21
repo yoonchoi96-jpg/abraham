@@ -152,3 +152,25 @@ the 50+ human-verified samples and current Mac/GearShift telemetry.
 **Central GearShift stays unchanged:** AMANDO is absent from the accessible
 GitHub repositories. A local scheduler cannot permissibly override
 ownership, audio priorities, real memory pressure or existing leases.
+
+
+## Round 3 safeguards (policy v4, 2026-10-21)
+
+Before a pair may be marked `redundancy_candidate`, the v4 critical
+marker set compares numbers, direct quotations, word-bounded negations,
+Roman-script proper names/acronyms (e.g., Apple versus Microsoft), and
+lexical uncertainty/attribution cues (e.g., reportedly, may, possible,
+추정, 据称). This conservatively favors extra local work over missed facts.
+These markers are lexical heuristics and **not** comprehensive NER,
+coreference, factual entailment, or multilingual uncertainty detection.
+
+A headline longer than 500 characters is `review_required` rather than
+being indexed with a partial title identity, or incorrectly treated as an
+exact duplicate. Revision-dependent candidates only remain current when
+their origin is from the current policy and has an unchanged title/body.
+
+Tests were added for changed entities, uncertain attributions, overlong
+headlines, human-gold precision/recall calculations, and stale references.
+They still require independent execution on the checked-out branch.
+No DeepSeek translation skip, main-branch merge, automatic workflow
+schedule, or additional paid API was enabled.
