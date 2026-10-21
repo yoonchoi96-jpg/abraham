@@ -75,6 +75,8 @@ class GuardedLocalEmbedder:
         self.model = model
         self.gear = GearShift(amando_root)
         self.last_call_stats = {}
+        self.total_stats = {"texts": 0, "chunks": 0, "local_requests": 0,
+                            "input_bytes": 0, "truncated_bytes": 0}
 
     def __call__(self, texts: list[str]) -> list[list[float]]:
         if not texts or len(texts) > EMBED_MAX_INPUTS:
@@ -87,6 +89,11 @@ class GuardedLocalEmbedder:
         if len(chunks) > EMBED_MAX_CHUNKS:
             # Never silently use a prefix for a semantic skip decision.
             raise Held("EMBEDDING_CHUNK_BUDGET_EXCEEDED")
+        # Rollback mode disables multi-chunk pooling without returning to
+        # unsafe head-only 3,700-character truncation.
+        if os.getenv("ABRAHAM_NOVELTY_CHUNKED_EMBEDDINGS", "1") == "0" and (
+                any(owner.count(i) > 1 for i in range(len(texts)))):
+            raise Held("CHUNKED_EMBEDDINGS_DISABLED")
         vectors, requests = [], 0
         for batch in _embedding_batches(chunks):
             context = max(required_context(t, 1, 4096) for t in batch)
@@ -113,6 +120,7 @@ class GuardedLocalEmbedder:
                 raise Held("LOCAL_EMBEDDING_INVALID_RESPONSE") from None
             self.gear.check(budget, owned=self.model)
             requests += 1
+            self.total_stats["local_requests"] += 1
 
         # Each document is represented by a byte-weighted, unit-normalized
         # mean of ALL its chunks. No article suffix is discarded. This is
@@ -137,6 +145,8 @@ class GuardedLocalEmbedder:
             "input_bytes": sum(len(t.encode("utf-8")) for t in texts),
             "truncated_bytes": 0,
         }
+        for field in ("texts", "chunks", "input_bytes"):
+            self.total_stats[field] += self.last_call_stats[field]
         return result
 
 def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
@@ -228,6 +238,7 @@ def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
                 blocked += 1
         return {"evaluated": completed, "held": blocked,
                 "decisions": index.counts(),
+                "local_embedding_metrics": getattr(embed, "total_stats", None),
                 "deepseek_api_calls": 0, "drive_writes": 0,
                 "automatic_api_suppression": False}
     finally:
