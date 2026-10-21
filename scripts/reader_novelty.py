@@ -172,7 +172,7 @@ class NoveltyIndex:
                   decision, match_key, score, coverage, reason)
         with self.db:
             self.db.execute(
-                """INSERT OR IGNORE INTO novelty_v1 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT OR IGNORE INTO novelty_v1 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 record
             )
         return dict(decision=decision, match_key=match_key,
