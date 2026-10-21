@@ -243,3 +243,32 @@ def test_unbounded_embedding_request_is_held_not_truncated(tmp_path):
         with pytest.raises(Held, match="EMBEDDING_CHUNK_BUDGET_EXCEEDED"):
             embed(["a" * 400000])
         urlopen.assert_not_called()
+
+
+def test_scanner_revisits_mutated_source_without_paid_api(tmp_path):
+    work = tmp_path / "private"
+    stager = DriveLibraryStager(work)
+    source = work / "stable.source"
+    first_html = ("<html><body><article><p>" + FIRST * 5 +
+                  "</p></article></body></html>").encode()
+    source.write_bytes(first_html)
+    stager.process("stable", {"id": "drive1", "name": "article.html", "version": "1"}, source)
+    stager.close()
+    bulk = sqlite3.connect(work / "bulk.sqlite")
+    bulk.execute("CREATE TABLE jobs(key TEXT PRIMARY KEY, metadata TEXT)")
+    bulk.execute("INSERT INTO jobs VALUES(?,?)",
+                 ("stable", json.dumps({"id": "drive1", "name": "article.html", "version": "1"})))
+    bulk.commit()
+    bulk.close()
+    assert scan(work, model="test-local", embed=FakeEmbed(), max_items=5)["evaluated"] == 1
+    assert scan(work, model="test-local", embed=FakeEmbed(), max_items=5)["evaluated"] == 0
+    # Same key, amended body, even though staging metadata still has version 1.
+    source.write_bytes(("<html><body><article><p>" + FIRST * 5 + " " +
+                        ADDITIONAL + "</p></article></body></html>").encode())
+    rerun = scan(work, model="test-local", embed=FakeEmbed(), max_items=5)
+    assert rerun["evaluated"] == 1
+    assert rerun["automatic_api_suppression"] is False
+    db = sqlite3.connect(work / "reader-novelty.sqlite")
+    row = db.execute("SELECT body_sha256 FROM novelty_v1 WHERE document_key='stable'").fetchone()
+    assert row and len(row[0]) == 64
+    db.close()
