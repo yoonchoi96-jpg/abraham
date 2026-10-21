@@ -160,8 +160,9 @@ class NoveltyIndex:
                              "coverage", "reason"), already[2:]))
         old = self.db.execute(
             """SELECT document_key FROM novelty_v1
-               WHERE model_id=? AND body_sha256=? AND document_key<>? LIMIT 1""",
-            (self.model_id, sha, key)
+               WHERE model_id=? AND body_sha256=? AND title=?
+                 AND document_key<>? LIMIT 1""",
+            (self.model_id, sha, stored_title, key)
         ).fetchone()
         decision, match_key, score, coverage = "novel", None, None, None
         reason = "NO_EQUIVALENT_EVIDENCE"
