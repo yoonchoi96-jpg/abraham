@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import urllib.request
 from pathlib import Path
@@ -70,7 +71,9 @@ def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
         raise RuntimeError("SEMANTIC_SCAN_BUSY") from None
     stage_db = sqlite3.connect(stage_path)
     bulk_db = sqlite3.connect(bulk_path)
-    novelty_db = sqlite3.connect(work / "reader-novelty.sqlite")
+    novelty_path = work / "reader-novelty.sqlite"
+    novelty_db = sqlite3.connect(novelty_path)
+    os.chmod(novelty_path, 0o600)
     try:
         index = NoveltyIndex(novelty_db, model_id=model)
         novelty_db.execute("""CREATE TABLE IF NOT EXISTS novelty_held (
