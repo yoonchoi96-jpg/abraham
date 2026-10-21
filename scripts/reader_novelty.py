@@ -23,7 +23,7 @@ MIN_CLAIM_CHARS = 18
 TOP_K = 5
 # Old similarity decisions were based on head-only embedding and a single
 # nearest neighbor. Re-evaluate them before they may become review candidates.
-POLICY_REVISION = "v3-headline-guards-dependent-signature-20261021"
+POLICY_REVISION = "v4-entity-and-attribution-guards-20261021"
 
 
 def claims_from_text(text: str) -> list[str]:
@@ -32,21 +32,56 @@ def claims_from_text(text: str) -> list[str]:
 
 
 def critical_markers(text: str) -> set[str]:
-    # Differences in numbers, times, quantitative units, explicit quotes and
-    # negation cues mean "new/possibly conflicting evidence" regardless of sim.
+    """Conservative surface guards against changed fact bearers or qualifiers.
+
+    Only lexical heuristics, never a named-entity recognition guarantee:
+    uncertainty is *novel/review*, not permission to drop paid translation.
+    """
+    lowered = text.casefold()
     numbers = {m.lower() for m in re.findall(
         r"\d+(?:[.,]\d+)*(?:%|％|억|만|조|bn|million|billion|년|월|일|원|달러)?", text
     )}
     quoted = {m.casefold() for m in re.findall(
         r'["“「『]([^"”」』]{3,120})["”」』]', text
     )}
-    negations = {x for x in (
-        "not", "no longer", "denied", "false", "never",
-        "부인", "아니다", "없다", "취소", "중단", "不", "没有", "否认",
-    ) if x in text.casefold()}
-    return {"number:" + x for x in numbers} | {
-        "quote:" + x for x in quoted
-    } | {"negation:" + x for x in negations}
+    # Word boundaries avoid wrongly treating "notable" as English "not".
+    english_negations = {
+        x for x in ("not", "never", "denied", "false", "cannot", "can't",
+                    "won't", "without", "no longer")
+        if re.search(r"(?<!\w)" + re.escape(x) + r"(?!\w)", lowered)
+    }
+    east_asian_negations = {
+        x for x in ("부인", "아니다", "없다", "취소", "중단",
+                    "不", "没有", "否认")
+        if x in lowered
+    }
+    # Named entities and acronyms are frequent sources of false skips:
+    # "Apple acquired X" and "Microsoft acquired X" can be embedding-near.
+    # Sentence-initial ordinary words may raise false novelty (extra calls),
+    # but that is preferable to hiding a changed company/person.
+    generic = {"the", "a", "an", "this", "that", "new", "researchers",
+               "officials", "analysts", "company", "firm", "report",
+               "according", "sources", "today", "however"}
+    names = {
+        token.casefold() for token in re.findall(
+            r"(?<![A-Za-z0-9_])(?:[A-Z][a-zA-Z]{2,}|[A-Z]{2,})(?![A-Za-z0-9_])",
+            text
+        ) if token.casefold() not in generic
+    }
+    # Attribution/hedging changes should never be smoothed away by embeddings.
+    attribution = {
+        x for x in ("reportedly", "allegedly", "according to", "sources say",
+                    "may", "might", "could", "rumored", "unconfirmed",
+                    "관계자에 따르면", "추정", "의혹", "가능성",
+                    "据称", "可能", "传闻", "未经证实")
+        if (re.search(r"(?<!\w)" + re.escape(x) + r"(?!\w)", lowered)
+            if x.isascii() else x in lowered)
+    }
+    return ({ "number:" + x for x in numbers}
+            | {"quote:" + x for x in quoted}
+            | {"negation:" + x for x in english_negations | east_asian_negations}
+            | {"entity:" + x for x in names}
+            | {"attribution:" + x for x in attribution})
 
 
 def normalized_embedding(value) -> np.ndarray:
