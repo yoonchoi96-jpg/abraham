@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
+
+from abraham_api_usage import append_record, singleflight, usage_record
 import os
 import time
 import urllib.error
@@ -30,28 +33,22 @@ class DeepSeekClient:
         self.base_url = base_url.rstrip("/")
         self.models = _Models(self)
 
-    def _record_usage(self, model: str, usage: dict) -> None:
+    def _record_usage(self, model: str, usage: dict, *, task: str,
+                      finish_reason: str | None, response_model: str | None) -> None:
         if not usage:
             return
         path = os.getenv("ABRAHAM_AI_USAGE_LOG")
         if not path:
             return
-        record = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "provider": "deepseek",
-            "model": model,
-            "prompt_tokens": usage.get("prompt_tokens"),
-            "completion_tokens": usage.get("completion_tokens"),
-            "reasoning_tokens": usage.get("reasoning_tokens"),
-            "total_tokens": usage.get("total_tokens"),
-        }
+        record = usage_record(model=model, task=task, usage=usage,
+                              finish_reason=finish_reason,
+                              response_model=response_model)
         try:
-            target = os.path.abspath(path)
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            with open(target, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError as exc:
-            print(f"[AI USAGE LOG FAILED] deepseek: {exc}")
+            append_record(path, record)
+        except OSError:
+            # Logging is best-effort: never bill for a retry only because a
+            # successful provider response could not be written to disk.
+            print("[AI USAGE LOG FAILED] deepseek: local_log_unavailable")
 
     def generate_content(self, *, model: str, contents: str, config: dict):
         payload = {
@@ -116,29 +113,44 @@ class DeepSeekClient:
             method="POST",
         )
 
-        last_error = None
-        for attempt in range(retries):
-            try:
-                with urllib.request.urlopen(request, timeout=timeout) as response:
-                    data = json.loads(response.read().decode("utf-8"))
-                content = data["choices"][0]["message"]["content"]
-                self._record_usage(model, data.get("usage") or {})
-                if not isinstance(content, str) or not content.strip():
-                    raise RuntimeError("DeepSeek returned empty content")
-                return DeepSeekResponse(text=content)
-            except urllib.error.HTTPError as exc:
-                body = exc.read().decode("utf-8", errors="replace")
-                last_error = RuntimeError(f"DeepSeek HTTP {exc.code}: {body[:2000]}")
-                if exc.code not in {429, 500, 502, 503, 504} or attempt >= retries - 1:
-                    raise last_error from exc
-            except (urllib.error.URLError, TimeoutError, KeyError, json.JSONDecodeError) as exc:
-                last_error = RuntimeError(f"DeepSeek request failed: {exc}")
-                if attempt >= retries - 1:
-                    raise last_error from exc
+        task = str(config.get("usage_task", "unattributed"))
+        def execute_once():
+            last_error = None
+            for attempt in range(retries):
+                try:
+                    with urllib.request.urlopen(request, timeout=timeout) as response:
+                        data = json.loads(response.read().decode("utf-8"))
+                    choice = data["choices"][0]
+                    content = choice["message"]["content"]
+                    self._record_usage(
+                        model, data.get("usage") or {}, task=task,
+                        finish_reason=choice.get("finish_reason"),
+                        response_model=data.get("model")
+                    )
+                    if not isinstance(content, str) or not content.strip():
+                        raise RuntimeError("DeepSeek returned empty content")
+                    return DeepSeekResponse(text=content)
+                except urllib.error.HTTPError as exc:
+                    body = exc.read().decode("utf-8", errors="replace")
+                    last_error = RuntimeError(f"DeepSeek HTTP {exc.code}: {body[:2000]}")
+                    if exc.code not in {429, 500, 502, 503, 504} or attempt >= retries - 1:
+                        raise last_error from exc
+                except (urllib.error.URLError, TimeoutError, KeyError, json.JSONDecodeError) as exc:
+                    last_error = RuntimeError(f"DeepSeek request failed: {exc}")
+                    if attempt >= retries - 1:
+                        raise last_error from exc
+                time.sleep(min(60, 2 ** attempt))
+            raise last_error or RuntimeError("DeepSeek request failed")
 
-            time.sleep(min(60, 2 ** attempt))
-
-        raise last_error or RuntimeError("DeepSeek request failed")
+        # Only simultaneous byte-identical provider requests sharing an account
+        # can coalesce. No paid response is persisted or reused indefinitely.
+        if os.getenv("DEEPSEEK_SINGLEFLIGHT", "1") == "0":
+            return execute_once()
+        fingerprint = hashlib.sha256(json.dumps(
+            [self.api_key, self.base_url, task, payload],
+            ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        return singleflight(fingerprint, execute_once)
 
 
 def get_deepseek_client() -> DeepSeekClient:

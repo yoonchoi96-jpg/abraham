@@ -338,6 +338,7 @@ def translate_korean_batch(
                 contents=prompt,
                 config={
                     "response_mime_type": "application/json",
+                    "usage_task": "korean_translation",
                     "thinking": os.getenv("ABRAHAM_TRANSLATION_THINKING", "disabled"),
                     "max_output_tokens": int(os.getenv("ABRAHAM_TRANSLATION_MAX_TOKENS", "32768")),
                 },
@@ -563,6 +564,7 @@ def _rate_batch(client, documents):
         contents=_build_rating_prompt(documents),
         config={
             "response_mime_type": "application/json",
+            "usage_task": "rating",
             "thinking": os.getenv("DEEPSEEK_RATING_THINKING", "disabled"),
             "max_output_tokens": int(os.getenv("DEEPSEEK_RATING_MAX_TOKENS", "8192")),
         },
