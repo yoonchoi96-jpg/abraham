@@ -72,12 +72,12 @@ def evaluate(database: Path, labels: Path, *, model_id: str) -> dict:
                 continue
             if row[2]:
                 match = conn.execute(
-                    """SELECT body_sha256,title FROM novelty_v1
+                    """SELECT body_sha256,title,policy_revision FROM novelty_v1
                        WHERE document_key=? AND model_id=?""",
                     (row[2], model_id)
                 ).fetchone()
-                if (not match or not row[3] or
-                    NoveltyIndex._source_signature(*match) != row[3]):
+                if (not match or not row[3] or match[2] != POLICY_REVISION or
+                    NoveltyIndex._source_signature(match[0], match[1]) != row[3]):
                     count["missing_or_stale"] += 1
                     continue
             count["scoreable"] += 1
