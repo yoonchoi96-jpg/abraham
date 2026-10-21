@@ -88,10 +88,9 @@ def required_context(prompt, max_tokens, requested_context):
     if not 512 <= requested_context <= 4096 or not 1 <= max_tokens <= 512:
         raise Held('BOUNDED_INFERENCE_REQUIRED')
     needed = len(prompt.encode('utf-8')) + max_tokens + 128
-    selected = max(512, ((needed + 255) // 256) * 256)
-    if selected > requested_context:
+    if len(prompt.encode('utf-8')) + max_tokens > requested_context:
         raise Held('PROMPT_EXCEEDS_CONTEXT')
-    return selected
+    return min(requested_context, max(512, ((needed + 255) // 256) * 256))
 
 
 def infer(backend, model, prompt, *, amando_root, work, context=4096, max_tokens=256):
