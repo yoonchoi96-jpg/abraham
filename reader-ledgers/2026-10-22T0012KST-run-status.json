@@ -1,0 +1,38 @@
+{
+  "schema": "reader-pipeline-run-status-v1",
+  "run_id": "2026-10-22T0012KST",
+  "timezone": "Asia/Seoul",
+  "source_export_id": "1906cbdf72834fa399ab8d1abdc3f3da",
+  "export_status": "completed",
+  "export_status_documents_processed": 0,
+  "export_status_documents_total": 0,
+  "prior_reported_export_total": 62189,
+  "export_count_discrepancy": "UNRESOLVED",
+  "zip_download": "BLOCKED_DNS",
+  "drive_seed_id": "12pPB-XrRQAQj1PVjAbKrY4Gq4g0Szbmy",
+  "drive_seed_direct_subfolders": [
+    "Rss",
+    "Article",
+    "Email",
+    "Video"
+  ],
+  "reader_feed_unseen_api_count": 4599,
+  "reader_unseen_count_is_complete": false,
+  "reader_ui_api_count_discrepancy": "UNRESOLVED",
+  "newly_classified_verified": 0,
+  "reader_tag_writes_verified": 0,
+  "reader_seen_writes_verified": 0,
+  "abraham_receipts_verified": 0,
+  "nav_qa_verified": 0,
+  "obsidian_writes_verified": 0,
+  "checkpoint_scanned_observed": 40966,
+  "checkpoint_cursor_observed": "01m348debyg71sv01k9xedsh54",
+  "checkpoint_advanced": false,
+  "blockers": [
+    "S3 host DNS resolution failed from execution host",
+    "Reader list by id returned intermittent errors",
+    "Current new Reader items not found in existing Drive seed",
+    "No verified Abraham canonical ingestion or Nav/Obsidian sync"
+  ],
+  "preservation": "No raw, Reader tags, Seen, or Vault files modified in this run."
+}
