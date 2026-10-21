@@ -34,6 +34,12 @@ jobs:
         run: |
           python3 -m pip install pytest
           python3 -m pytest -q tests/test_reader_*.py tests/test_color_rules.py
+      - name: Benchmark multilingual title-index retrieval (synthetic, offline)
+        run: python3 -m scripts.reader_novelty_benchmark --docs 10000 --trials 7
+      - name: Benchmark advisory cross-language LSH (synthetic, offline)
+        run: python3 -m scripts.reader_crosslingual_benchmark --docs 10000 --trials 5
+      - name: Full 10000-document multilingual novelty stress (offline, no paid API)
+        run: python3 -m scripts.reader_novelty_stress --documents 10000
       - name: Process real synthetic ZIP larger than 3 GiB and rerun it
         run: python3 scripts/reader_intake_test.py --large
       # No cache, artifact upload, dataset commits, cloud resources, or AI secrets.
