@@ -7,7 +7,22 @@ modify their Drive or Reader metadata.
 
 Source root (explicit):
 - `Reader_Uploaded_Files/Library` Drive folder ID:
-  `1KIsyDd_EUJuDxMIvrnIvi2VWriaxaB2U`.
+  `1HokbvlhxZsvFqF9aqTINEscNy3m0liOJ`.
+
+## Verified source folder relocation (2026-10-21)
+
+The prior Library ID `1KIsyDd_EUJuDxMIvrnIvi2VWriaxaB2U` was
+accessibly empty. The current `Reader_Uploaded_Files` is
+`1QwL2f9Ws0jVamAl2tavcpKoOWsIfWvdX`, with child `Library`
+`1HokbvlhxZsvFqF9aqTINEscNy3m0liOJ`. An independent authenticated
+Drive metadata-only, 28-page listing found **12,804 direct document files**.
+This is a *source inventory only*, not downloaded or classified documents;
+listing alone cannot establish corpus completeness or current validity later.
+
+The CLI refuses to report success on an empty source scan. Its default root
+is the new verified folder ID, and `--folder-id` can override the source
+after independent verification. Do not silently fall back to a similarly
+named folder.
 
 ## First manual run (Mac/private persistent environment)
 
