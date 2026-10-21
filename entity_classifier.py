@@ -71,6 +71,7 @@ def _classify_once(client, entities):
         contents=prompt,
         config={
             "response_mime_type": "application/json",
+            "usage_task": "entity_classification",
             "thinking": os.getenv("ABRAHAM_ENTITY_CLASSIFICATION_THINKING", "disabled"),
             "max_output_tokens": int(
                 os.getenv("ABRAHAM_ENTITY_CLASSIFICATION_MAX_TOKENS", "8192")
