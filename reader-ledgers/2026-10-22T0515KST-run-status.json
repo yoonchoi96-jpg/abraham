@@ -1,0 +1,19 @@
+{
+  "run_id": "2026-10-22T0515KST",
+  "reader_feed_unseen": 5659,
+  "reader_body_verified": 7,
+  "reader_new_grades": 6,
+  "red": 3,
+  "blue": 3,
+  "unrated_seen": 1,
+  "reader_tag_verified": 6,
+  "reader_seen_verified": 7,
+  "abraham_sent": 0,
+  "nav_completed": 0,
+  "obsidian_written": 0,
+  "export_id": "1906cbdf72834fa399ab8d1abdc3f3da",
+  "zip_downloaded": false,
+  "checkpoint_scanned": 40966,
+  "cursor": "01m348debyg71sv01k9xedsh54",
+  "local_ledger": "reader_20261022_0515_classification_ledger.json"
+}
