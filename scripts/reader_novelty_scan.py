@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import socket
 import sqlite3
 import urllib.request
 
@@ -149,6 +150,26 @@ class GuardedLocalEmbedder:
             self.total_stats[field] += self.last_call_stats[field]
         return result
 
+def enforce_offline_dry_run() -> None:
+    """Deny all non-Ollama TCP traffic for this process, including paid APIs.
+
+    A dry run can contact ONLY the local Ollama embedding endpoint. This is
+    defense-in-depth, not a system firewall or a production sandbox.
+    """
+    for secret in ("DEEPSEEK_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY"):
+        os.environ.pop(secret, None)
+    original_connect = socket.socket.connect
+
+    def guarded_connect(sock, address):
+        if (isinstance(address, tuple) and len(address) >= 2
+                and address[0] in ("127.0.0.1", "::1")
+                and address[1] == 11434):
+            return original_connect(sock, address)
+        raise Held("DRY_RUN_REMOTE_EGRESS_FORBIDDEN")
+
+    socket.socket.connect = guarded_connect
+
+
 def scan(work: Path, *, model: str, embed, max_items: int = 100, retry_held: bool = False) -> dict:
     if not 1 <= max_items <= 100000:
         raise ValueError("BOUNDED_SCAN_REQUIRED")
@@ -256,9 +277,13 @@ def main():
     p.add_argument("--model", required=True, help="Existing local Ollama embedding model")
     p.add_argument("--amando-root", required=True)
     p.add_argument("--limit", type=int, default=100)
+    p.add_argument("--dry-run", action="store_true",
+                   help="Remove paid API keys and block non-local network egress")
     p.add_argument("--retry-held", action="store_true",
                    help="Explicitly retry previously held local-only jobs, once per scan")
     args = p.parse_args()
+    if args.dry_run:
+        enforce_offline_dry_run()
     embedder = GuardedLocalEmbedder(args.model, args.amando_root)
     result = scan(args.work, model=args.model, embed=embedder,
                   max_items=args.limit, retry_held=args.retry_held)
