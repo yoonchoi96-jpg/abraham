@@ -1,0 +1,39 @@
+{
+  "run_id": "2026-10-21T1720KST",
+  "correction_of": "reader-ledgers/2026-10-21T1720KST-staged.jsonl",
+  "reason": "Initial staging hashes were calculated by an incorrect JavaScript SHA-256 routine. All original SHA-256 values in staged file are INVALID and MUST NOT be used. This sidecar supersedes their hash fields.",
+  "hash_algorithm": "SHA-256",
+  "selftest_abc": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+  "rows": [
+    {
+      "document_id": "01m379vmr5w1yfdf86y6x5rrc4",
+      "reader_body_sha256": "093774422fb459976013efba99cf3ba3d74949d490bdf66a8bc55c8232e71a85",
+      "drive_body_sha256": "093774422fb459976013efba99cf3ba3d74949d490bdf66a8bc55c8232e71a85",
+      "normalized_body_sha256": "fa2fca5bf17df2046487eb580f6d6de7c193815cbc6bbfe5bbaa0d82982256ff"
+    },
+    {
+      "document_id": "01m379vmn075d24zgyp6qcjk6e",
+      "reader_body_sha256": "98d92468e30b353da5991c16f677abb7b2992f4415c9b834f9462137a4a1cf7f",
+      "drive_body_sha256": "d43c5c006c3f0a874ba8bec3fddd3c1257bfd9bac9b85bb07c61406518518bad",
+      "normalized_body_sha256": "7988960dfc48d659bc40ff71c1ad6789b079981cf9e25a7fc76cb8b90da684a0"
+    },
+    {
+      "document_id": "01m379vmbc9sn636yn0pw2yqet",
+      "reader_body_sha256": "1a3d8465f6693a3f52af6dd1f79ec1f3ffbde7d4316d61a74d609f68accb8f8b",
+      "drive_body_sha256": "1a3d8465f6693a3f52af6dd1f79ec1f3ffbde7d4316d61a74d609f68accb8f8b",
+      "normalized_body_sha256": "3e7b1aa4f9d9146c754b04381fcd193287b8460c235f5b99f01477f8a1b1f179"
+    },
+    {
+      "document_id": "01m379vm8dsm9t9ts937vq8wty",
+      "reader_body_sha256": "7d86d64582d93e7d03be7744de9a5c7053d903511af70698e9fae617e956fd27",
+      "drive_body_sha256": "d8e988cc6b851454b4557503e1c2d8bb2fa607e4532a9cbe685d5f024c1e25af",
+      "normalized_body_sha256": "58508dc317224f04b204868b4f4df1fd57e4d2a42cd4f4d981f6ff7d4dce1d1f"
+    },
+    {
+      "document_id": "01m379vm7q0tmen7pky6mw89ss",
+      "reader_body_sha256": "139df6151a6ecced4b43b1c89de24f2f5a084d75e1aa911c83a3c1884e8dd8c4",
+      "drive_body_sha256": "139df6151a6ecced4b43b1c89de24f2f5a084d75e1aa911c83a3c1884e8dd8c4",
+      "normalized_body_sha256": "a09ab68be979b76a71606f3580621dd61dc90792f44299368b0e7917495c4626"
+    }
+  ]
+}
