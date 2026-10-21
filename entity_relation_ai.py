@@ -325,6 +325,7 @@ def _call(client, documents: list[dict], catalog: list[dict]) -> dict:
         contents=_prompt(documents, catalog),
         config={
             "response_mime_type": "application/json",
+            "usage_task": "entity_relation",
             "thinking": os.getenv("DEEPSEEK_ENTITY_RELATION_THINKING", "disabled"),
             "max_output_tokens": int(
                 os.getenv("DEEPSEEK_ENTITY_RELATION_MAX_TOKENS", "8192")
