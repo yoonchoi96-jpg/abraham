@@ -36,12 +36,12 @@ Run from the project checkout with an existing supported Python environment:
 
 ```sh
 python3 -m scripts.reader_drive_stage \
-  --work "$HOME/.abraham-reader-stage" --max-items 1000
+  --work "$HOME/.abraham-reader-stage" --max-items 100000
 python3 -m scripts.reader_drive_stage \
   --work "$HOME/.abraham-reader-stage" --status-only
 ```
 
-Run again until `discovery_complete=true` and `pending=0`.
+The default `--max-items 100000` can traverse the entire currently observed 12,804-file Library in **one resumable command**; this is a bound on work, not a 100k-document claim. Re-run only if interrupted or if pending/held jobs remain. Check `discovery_complete=true`, `pending=0`, and held counts before any promotion.
 To detect newly edited documents later, use `--rescan` once.
 The work directory must be private, local, persistent and not in Git.
 
