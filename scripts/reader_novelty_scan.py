@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+from collections import OrderedDict
 import json
 import os
 import socket
@@ -32,6 +33,8 @@ EMBED_CHUNK_BYTES = 3000
 EMBED_BATCH_BYTES = 12000
 EMBED_MAX_INPUTS = 65
 EMBED_MAX_CHUNKS = 128
+EMBED_CACHE_MAX_BYTES = 32 * 1024 * 1024
+EMBED_CACHE_MAX_ENTRIES = 4096
 
 
 def _utf8_chunks(value: str, max_bytes: int = EMBED_CHUNK_BYTES) -> list[str]:
@@ -77,7 +80,28 @@ class GuardedLocalEmbedder:
         self.gear = GearShift(amando_root)
         self.last_call_stats = {}
         self.total_stats = {"texts": 0, "chunks": 0, "local_requests": 0,
-                            "input_bytes": 0, "truncated_bytes": 0}
+                            "input_bytes": 0, "truncated_bytes": 0,
+                            "cache_hits": 0, "embedding_misses": 0}
+        # Bounded RAM, never disk or user content; only vectors keyed by
+        # SHA-256 of exact chunks. Scope = this instance and this model.
+        self._chunk_cache = OrderedDict()
+        self._cache_bytes = 0
+        self._cache_enabled = os.getenv("ABRAHAM_EMBED_CACHE", "1") != "0"
+
+    def _remember(self, key: bytes, vector: np.ndarray):
+        if not self._cache_enabled:
+            return
+        prior = self._chunk_cache.pop(key, None)
+        if prior is not None:
+            self._cache_bytes -= prior.nbytes
+        copy = vector.astype(np.float32, copy=True)
+        self._chunk_cache[key] = copy
+        self._cache_bytes += copy.nbytes
+        while (self._chunk_cache and
+               (self._cache_bytes > EMBED_CACHE_MAX_BYTES or
+                len(self._chunk_cache) > EMBED_CACHE_MAX_ENTRIES)):
+            _, evicted = self._chunk_cache.popitem(last=False)
+            self._cache_bytes -= evicted.nbytes
 
     def __call__(self, texts: list[str]) -> list[list[float]]:
         if not texts or len(texts) > EMBED_MAX_INPUTS:
@@ -95,8 +119,25 @@ class GuardedLocalEmbedder:
         if os.getenv("ABRAHAM_NOVELTY_CHUNKED_EMBEDDINGS", "1") == "0" and (
                 any(owner.count(i) > 1 for i in range(len(texts)))):
             raise Held("CHUNKED_EMBEDDINGS_DISABLED")
-        vectors, requests = [], 0
-        for batch in _embedding_batches(chunks):
+        vectors_by_key, misses, seen = {}, [], set()
+        cache_hits = 0
+        keys = [hashlib.sha256(part.encode("utf-8")).digest() for part in chunks]
+        for key, part in zip(keys, chunks):
+            if key in vectors_by_key:
+                cache_hits += 1
+                continue
+            cached = self._chunk_cache.get(key) if self._cache_enabled else None
+            if cached is not None:
+                vectors_by_key[key] = cached
+                self._chunk_cache.move_to_end(key)
+                cache_hits += 1
+            elif key not in seen:
+                seen.add(key)
+                misses.append((key, part))
+            else:
+                cache_hits += 1
+        requests = 0
+        for batch in _embedding_batches([part for _, part in misses]):
             context = max(required_context(t, 1, 4096) for t in batch)
             budget = budget_for("ollama", self.model, context, self.gear)
             self.gear.check(budget)
@@ -104,8 +145,7 @@ class GuardedLocalEmbedder:
                 "http://127.0.0.1:11434/api/embed",
                 data=json.dumps({"model": self.model, "input": batch,
                                  "truncate": False, "keep_alive": 0}).encode(),
-                headers={"Content-Type": "application/json"},
-                method="POST",
+                headers={"Content-Type": "application/json"}, method="POST",
             )
             try:
                 with urllib.request.urlopen(req, timeout=240) as resp:
@@ -116,12 +156,27 @@ class GuardedLocalEmbedder:
             if not isinstance(batch_vectors, list) or len(batch_vectors) != len(batch):
                 raise Held("LOCAL_EMBEDDING_INVALID_RESPONSE")
             try:
-                vectors.extend(normalized_embedding(v) for v in batch_vectors)
+                normalized = [normalized_embedding(v) for v in batch_vectors]
             except ValueError:
                 raise Held("LOCAL_EMBEDDING_INVALID_RESPONSE") from None
+            # All unique misses retain deterministic order across FIFO batches.
+            keys_batch = [key for key, _ in misses
+                          if key not in vectors_by_key][:len(batch)]
+            for key, vec in zip(keys_batch, normalized):
+                vectors_by_key[key] = vec
+                self._remember(key, vec)
             self.gear.check(budget, owned=self.model)
             requests += 1
             self.total_stats["local_requests"] += 1
+        vectors = [vectors_by_key[key] for key in keys]
+        self.last_call_stats = {
+            "texts": len(texts), "chunks": len(chunks), "local_requests": requests,
+            "input_bytes": sum(len(t.encode("utf-8")) for t in texts),
+            "truncated_bytes": 0, "cache_hits": cache_hits,
+            "embedding_misses": len(misses),
+        }
+        for field in ("cache_hits", "embedding_misses"):
+            self.total_stats[field] += self.last_call_stats[field]
 
         # Each document is represented by a byte-weighted, unit-normalized
         # mean of ALL its chunks. No article suffix is discarded. This is
@@ -141,11 +196,6 @@ class GuardedLocalEmbedder:
                 result.append(normalized_embedding(mean).tolist())
         except ValueError:
             raise Held("LOCAL_EMBEDDING_INVALID_RESPONSE") from None
-        self.last_call_stats = {
-            "texts": len(texts), "chunks": len(chunks), "local_requests": requests,
-            "input_bytes": sum(len(t.encode("utf-8")) for t in texts),
-            "truncated_bytes": 0,
-        }
         for field in ("texts", "chunks", "input_bytes"):
             self.total_stats[field] += self.last_call_stats[field]
         return result

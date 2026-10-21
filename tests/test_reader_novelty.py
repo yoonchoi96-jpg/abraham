@@ -677,3 +677,141 @@ def test_v8_title_index_excludes_other_language_same_topic(tmp_path):
          "o acordo foi confirmado", "none")).fetchall()
     assert any("novelty_v1_titlekey" in row[3] for row in plan)
     db.close()
+
+
+
+def test_review_lsh_recovers_same_event_with_different_language_title(tmp_path):
+    db=sqlite3.connect(tmp_path / "cross-lang.sqlite")
+    idx=NoveltyIndex(db, model_id="local-review-model")
+    e=FakeEmbed()
+    first=idx.assess("es", "La empresa informó resultados nuevos", FIRST, e)
+    second=idx.assess("ko", "회사가 새로운 실적을 발표했습니다", REPHRASE, e)
+    assert first["decision"] == second["decision"] == "novel"
+    review=idx.cross_language_review("ko")
+    assert review["state"]=="review_only"
+    assert review["automatic_api_suppression"] is False
+    assert review["semantic_equivalence_proven"] is False
+    assert any(row["document_key"] == "es" for row in review["candidates"])
+    assert idx.is_current("ko")
+    db.close()
+
+
+def test_review_index_does_not_skip_changed_facts_or_source_mutations(tmp_path):
+    db=sqlite3.connect(tmp_path / "review-facts.sqlite")
+    idx=NoveltyIndex(db, model_id="local-review-model")
+    e=FakeEmbed()
+    idx.assess("origin", "Acuerdo de 2026 confirmado", FIRST, e)
+    idx.assess("copy", "2026년 계약은 취소됨", REPHRASE, e)
+    review=idx.cross_language_review("copy")
+    assert any(row["document_key"]=="origin" for row in review["candidates"])
+    assert review["automatic_api_suppression"] is False
+    idx.assess("origin", "Acuerdo de 2026 confirmado",
+               FIRST + " " + ADDITIONAL, e)
+    assert idx.cross_language_review("copy")["state"] == "review_only"
+    # Source changed but remains a human-review-only candidate.
+    idx.assess("origin", "Acuerdo de 2026 confirmado",
+               "Subscribe to continue reading.", e)
+    assert all(x["document_key"]!="origin" for x in
+               idx.cross_language_review("copy")["candidates"])
+    db.close()
+
+
+def test_review_lsh_has_no_paid_embedding_calls_and_is_bounded(tmp_path):
+    db=sqlite3.connect(tmp_path / "review-bounded.sqlite")
+    idx=NoveltyIndex(db, model_id="local-review-model")
+    e=FakeEmbed()
+    for n in range(42):
+        idx.assess(str(n), "Different headline " + str(n), FIRST, e)
+    calls=e.count
+    results=idx.cross_language_review("41", limit=3)
+    assert results["state"]=="review_only"
+    assert len(results["candidates"]) == 3
+    assert e.count == calls
+    assert results["reviewed_vector_candidates"] <= 1024
+    with pytest.raises(ValueError, match="BOUNDED_REVIEW_SEARCH_REQUIRED"):
+        idx.review.neighbors("41",limit=20000)
+    db.close()
+
+
+def test_review_lsh_current_model_and_policy_isolation(tmp_path):
+    db=sqlite3.connect(tmp_path / "isolated-review.sqlite")
+    a=NoveltyIndex(db,model_id="model-a")
+    b=NoveltyIndex(db,model_id="model-b")
+    a.assess("a", "French source report", FIRST, FakeEmbed())
+    b.assess("b", "Arabic related report", FIRST, FakeEmbed())
+    assert a.cross_language_review("a")["candidates"] == []
+    db.close()
+
+
+def test_local_embedding_chunk_cache_reuses_exact_text_without_network(tmp_path):
+    class Http:
+        def __init__(self, n): self.n=n
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def read(self): return json.dumps(
+            {"embeddings": [[1.0]*16 for _ in range(self.n)]}).encode()
+    calls=[]
+    def network(req, timeout):
+        count=len(json.loads(req.data)["input"])
+        calls.append(count)
+        return Http(count)
+    with patch("scripts.reader_novelty_scan.GearShift",return_value=Mock()), \
+         patch("scripts.reader_novelty_scan.budget_for",
+               return_value={"required_increment_bytes":5}), \
+         patch("scripts.reader_novelty_scan.urllib.request.urlopen",
+               side_effect=network):
+        emb=GuardedLocalEmbedder("local-digest-model",str(tmp_path))
+        a=emb(["La empresa confirmó los resultados y el acuerdo comercial."])
+        b=emb(["La empresa confirmó los resultados y el acuerdo comercial."])
+        assert a == b
+        assert len(calls)==1
+        assert emb.last_call_stats["local_requests"] == 0
+        assert emb.last_call_stats["embedding_misses"] == 0
+        assert emb.last_call_stats["cache_hits"] == 1
+
+
+def test_local_embedding_cache_deduplicates_chunks_within_batch(tmp_path):
+    class Http:
+        def __init__(self, n): self.n=n
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def read(self): return json.dumps(
+            {"embeddings": [[1.0]*16 for _ in range(self.n)]}).encode()
+    calls=[]
+    def network(req, timeout):
+        batch=json.loads(req.data)["input"]
+        calls.append(batch)
+        return Http(len(batch))
+    with patch("scripts.reader_novelty_scan.GearShift",return_value=Mock()), \
+         patch("scripts.reader_novelty_scan.budget_for",
+               return_value={"required_increment_bytes":5}), \
+         patch("scripts.reader_novelty_scan.urllib.request.urlopen",
+               side_effect=network):
+        emb=GuardedLocalEmbedder("test-cache-model",str(tmp_path))
+        phrase="重复的中文句子用于测试快速本地向量计算。"
+        rows=emb([phrase,phrase,"Additional independent content for contrast."])
+        assert rows[0]==rows[1]
+        assert len(calls)==1
+        assert len(calls[0])==2
+        assert emb.last_call_stats["cache_hits"]==1
+
+
+def test_local_embedding_cache_respects_opt_out(tmp_path, monkeypatch):
+    class Http:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def read(self): return json.dumps({"embeddings":[[1.0]*16]}).encode()
+    calls=[]
+    def network(req,timeout):
+        calls.append(req)
+        return Http()
+    monkeypatch.setenv("ABRAHAM_EMBED_CACHE","0")
+    with patch("scripts.reader_novelty_scan.GearShift",return_value=Mock()), \
+         patch("scripts.reader_novelty_scan.budget_for",
+               return_value={"required_increment_bytes":5}), \
+         patch("scripts.reader_novelty_scan.urllib.request.urlopen",
+               side_effect=network):
+        emb=GuardedLocalEmbedder("test-opt-out",str(tmp_path))
+        emb(["No inter-call cache from this model."])
+        emb(["No inter-call cache from this model."])
+        assert len(calls)==2

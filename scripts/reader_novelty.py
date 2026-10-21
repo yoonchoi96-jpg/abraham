@@ -17,6 +17,7 @@ from typing import Callable
 import numpy as np
 
 from scripts.reader_multilingual import canonical_numeric_text, localized_critical_markers
+from scripts.reader_crosslingual import CrossLanguageReviewIndex
 
 
 MAX_BODY_CHARS = 40000
@@ -27,7 +28,7 @@ TOP_K = 5
 MIN_VISIBLE_BODY_CHARS = 40
 # Old similarity decisions were based on head-only embedding and a single
 # nearest neighbor. Re-evaluate them before they may become review candidates.
-POLICY_REVISION = "v8-multilingual-title-index-20261021"
+POLICY_REVISION = "v9-local-review-lsh-and-chunk-cache-20261021"
 
 
 INCOMPLETE_SOURCE_MARKERS = (
@@ -194,6 +195,8 @@ class NoveltyIndex:
         self.db.execute("""CREATE INDEX IF NOT EXISTS novelty_v1_exact_v8
             ON novelty_v1(model_id,policy_revision,body_sha256,title_key)""")
         self.db.commit()
+        self.review = CrossLanguageReviewIndex(
+            self.db, model_id=self.model_id, policy_revision=POLICY_REVISION)
 
     def is_current(self, key: str) -> bool:
         """Old policies or mutated matching originals invalidate dependents."""
@@ -409,8 +412,16 @@ class NoveltyIndex:
                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 record
             )
+            # A non-novel or unembedded record never becomes review evidence.
+            # Updating both tables in one SQLite transaction avoids stale
+            # LSH buckets when the source is edited or reclassified.
+            self.review.replace(key, vector if decision == "novel" else None)
         return dict(decision=decision, match_key=match_key,
                     similarity=score, coverage=coverage, reason=reason)
+
+    def cross_language_review(self, key: str, *, limit: int = 5) -> dict:
+        """Advisory different-title/language neighbor candidates, never skips."""
+        return self.review.neighbors(key, limit=limit)
 
     def evidence_cards(self, key: str,
                        embed: Callable[[list[str]], list[list[float]]]) -> dict:
