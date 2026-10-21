@@ -471,9 +471,9 @@ def test_semantic_chains_do_not_use_unverified_candidate_as_reference(tmp_path):
     e = FakeEmbed()
     idx.assess("source", "Computing", FIRST, e)
     idx.assess("candidate", "Computing", REPHRASE, e)
-    assert idx._top_matches(normalized_embedding(e([FIRST])[0]), exclude="source")
+    assert idx._top_matches(normalized_embedding(e([FIRST])[0]), exclude="source") == []
     matches = idx._top_matches(normalized_embedding(e([FIRST])[0]), exclude="different")
-    assert "candidate" not in [row[1] for row in matches]
+    assert [row[1] for row in matches] == ["source"]
     db.close()
 
 
