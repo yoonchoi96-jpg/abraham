@@ -149,7 +149,7 @@ class GuardedLocalEmbedder:
             self.total_stats[field] += self.last_call_stats[field]
         return result
 
-def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
+def scan(work: Path, *, model: str, embed, max_items: int = 100, retry_held: bool = False) -> dict:
     if not 1 <= max_items <= 100000:
         raise ValueError("BOUNDED_SCAN_REQUIRED")
     work = _private_work(work)
@@ -191,7 +191,7 @@ def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
         for key, drive_id in rows:
             if completed + blocked >= max_items:
                 break
-            if novelty_db.execute(
+            if not retry_held and novelty_db.execute(
                 "SELECT 1 FROM novelty_held WHERE document_key=? AND model_id=?",
                 (key, model)
             ).fetchone():
@@ -215,10 +215,7 @@ def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
                     """SELECT raw_sha256,source_name FROM novelty_source_v1
                        WHERE document_key=? AND model_id=?""", (key, model)
                 ).fetchone()
-                if prior_source == (source_sha, name) and novelty_db.execute(
-                    """SELECT 1 FROM novelty_v1
-                       WHERE document_key=? AND model_id=?""", (key, model)
-                ).fetchone():
+                if prior_source == (source_sha, name) and index.is_current(key):
                     continue
                 doc = parse_document(name, original_bytes)
                 index.assess(key, doc["title"], doc["content"], embed)
@@ -226,6 +223,11 @@ def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
                     novelty_db.execute(
                         """INSERT OR REPLACE INTO novelty_source_v1 VALUES(?,?,?,?)""",
                         (key, model, source_sha, name)
+                    )
+                    # Explicit retrial succeeded; clear the quarantine marker.
+                    novelty_db.execute(
+                        "DELETE FROM novelty_held WHERE document_key=? AND model_id=?",
+                        (key, model)
                     )
                 completed += 1
             except (Held, ValueError, OSError, RuntimeError):
@@ -240,7 +242,7 @@ def scan(work: Path, *, model: str, embed, max_items: int = 100) -> dict:
                 "decisions": index.counts(),
                 "local_embedding_metrics": getattr(embed, "total_stats", None),
                 "deepseek_api_calls": 0, "drive_writes": 0,
-                "automatic_api_suppression": False}
+                "automatic_api_suppression": False, "retried_held": retry_held}
     finally:
         novelty_db.close()
         bulk_db.close()
@@ -254,9 +256,12 @@ def main():
     p.add_argument("--model", required=True, help="Existing local Ollama embedding model")
     p.add_argument("--amando-root", required=True)
     p.add_argument("--limit", type=int, default=100)
+    p.add_argument("--retry-held", action="store_true",
+                   help="Explicitly retry previously held local-only jobs, once per scan")
     args = p.parse_args()
     embedder = GuardedLocalEmbedder(args.model, args.amando_root)
-    result = scan(args.work, model=args.model, embed=embedder, max_items=args.limit)
+    result = scan(args.work, model=args.model, embed=embedder,
+                  max_items=args.limit, retry_held=args.retry_held)
     print(json.dumps(result))
 
 
