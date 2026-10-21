@@ -362,3 +362,24 @@ def test_explicit_retry_clears_held_marker_after_success(tmp_path):
     success = scan(work, model="installed-local", embed=FakeEmbed(), max_items=1, retry_held=True)
     assert success["evaluated"] == 1 and success["retried_held"] is True
     assert scan(work, model="installed-local", embed=FakeEmbed(), max_items=1)["evaluated"] == 0
+
+
+def test_evidence_cards_quote_real_source_and_detect_staleness(tmp_path):
+    db = sqlite3.connect(tmp_path / "cards.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    idx.assess("origin", "Computing", FIRST, embed)
+    choice = idx.assess("candidate", "Computing", REPHRASE, embed)
+    assert choice["decision"] == "redundancy_candidate"
+    cards = idx.evidence_cards("candidate", embed)
+    assert cards["state"] == "review_candidate_only"
+    assert cards["inference"] == "local_embedding_similarity_not_factual_entailment"
+    assert cards["cards"]
+    assert all(c["source_quote"] in FIRST and c["source_document_key"] == "origin"
+               for c in cards["cards"])
+    assert cards["cards"][0]["candidate_match"]
+    idx.assess("origin", "Computing", FIRST + " New detail at 2026.", embed)
+    assert idx.evidence_cards("candidate", embed) == {
+        "state": "stale_or_missing", "cards": [],
+    }
+    db.close()
