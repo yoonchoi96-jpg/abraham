@@ -103,11 +103,12 @@ class NoveltyIndex:
         if not row[1]:
             return True
         match = self.db.execute(
-            """SELECT body_sha256,title FROM novelty_v1
+            """SELECT body_sha256,title,policy_revision FROM novelty_v1
                WHERE document_key=? AND model_id=?""",
             (row[1], self.model_id)
         ).fetchone()
-        return bool(match and row[2] and self._source_signature(*match) == row[2])
+        return bool(match and row[2] and match[2] == POLICY_REVISION
+                    and self._source_signature(match[0], match[1]) == row[2])
 
     @staticmethod
     def _source_signature(body_sha256: str, title: str) -> str:
@@ -160,9 +161,10 @@ class NoveltyIndex:
                              "coverage", "reason"), already[2:]))
         old = self.db.execute(
             """SELECT document_key FROM novelty_v1
-               WHERE model_id=? AND body_sha256=? AND title=?
+               WHERE model_id=? AND policy_revision=?
+                 AND body_sha256=? AND title=?
                  AND document_key<>? LIMIT 1""",
-            (self.model_id, sha, stored_title, key)
+            (self.model_id, POLICY_REVISION, sha, stored_title, key)
         ).fetchone()
         decision, match_key, score, coverage = "novel", None, None, None
         reason = "NO_EQUIVALENT_EVIDENCE"
