@@ -16,6 +16,8 @@ from typing import Callable
 
 import numpy as np
 
+from scripts.reader_multilingual import canonical_numeric_text, localized_critical_markers
+
 
 MAX_BODY_CHARS = 40000
 MAX_CLAIMS = 32
@@ -25,7 +27,7 @@ TOP_K = 5
 MIN_VISIBLE_BODY_CHARS = 40
 # Old similarity decisions were based on head-only embedding and a single
 # nearest neighbor. Re-evaluate them before they may become review candidates.
-POLICY_REVISION = "v7-short-evidence-source-staleness-20261021"
+POLICY_REVISION = "v8-multilingual-title-index-20261021"
 
 
 INCOMPLETE_SOURCE_MARKERS = (
@@ -97,10 +99,10 @@ def critical_markers(text: str) -> set[str]:
     """
     lowered = text.casefold()
     numbers = {m.lower() for m in re.findall(
-        r"\d+(?:[.,]\d+)*(?:%|％|억|만|조|bn|million|billion|년|월|일|원|달러)?", text
+        r"\d+(?:[.,]\d+)*(?:%|％|억|만|조|bn|million|billion|년|월|일|원|달러)?", canonical_numeric_text(text)
     )}
     quoted = {m.casefold() for m in re.findall(
-        r'["“「『]([^"”」』]{3,120})["”」』]', text
+        r'["“「『«‹]([^"”」』»›]{3,120})["”」』»›]', text
     )}
     # Word boundaries avoid wrongly treating "notable" as English "not".
     english_negations = {
@@ -139,7 +141,8 @@ def critical_markers(text: str) -> set[str]:
             | {"quote:" + x for x in quoted}
             | {"negation:" + x for x in english_negations | east_asian_negations}
             | {"entity:" + x for x in names}
-            | {"attribution:" + x for x in attribution})
+            | {"attribution:" + x for x in attribution}
+            | localized_critical_markers(text))
 
 
 def normalized_embedding(value) -> np.ndarray:
@@ -182,6 +185,14 @@ class NoveltyIndex:
             self.db.execute("ALTER TABLE novelty_v1 ADD COLUMN policy_revision TEXT")
         if "match_body_sha256" not in columns:
             self.db.execute("ALTER TABLE novelty_v1 ADD COLUMN match_body_sha256 TEXT")
+        if "title_key" not in columns:
+            self.db.execute("ALTER TABLE novelty_v1 ADD COLUMN title_key TEXT")
+        # Run the migration AFTER title_key exists. Do not mutate private
+        # article content; older policy rows are deliberately not promoted.
+        self.db.execute("""CREATE INDEX IF NOT EXISTS novelty_v1_titlekey
+            ON novelty_v1(model_id,policy_revision,decision,title_key)""")
+        self.db.execute("""CREATE INDEX IF NOT EXISTS novelty_v1_exact_v8
+            ON novelty_v1(model_id,policy_revision,body_sha256,title_key)""")
         self.db.commit()
 
     def is_current(self, key: str) -> bool:
@@ -211,17 +222,31 @@ class NoveltyIndex:
         ).hexdigest()
 
     def _top_matches(self, vector, *, exclude, title=None):
+        """Indexed title gate: O(log N + same-title rows), no whole-index scan.
+
+        Same-title is a *necessary* prerequisite for proposing suppression,
+        never a sufficient one. Cross-language/rewritten-title pairs still
+        remain independent records and require separate human investigation.
+        The title=None fallback only preserves the direct diagnostic API.
+        """
         matches = []
-        cursor = self.db.execute(
-            """SELECT document_key, vector, dimensions, body_excerpt, markers, title
-               FROM novelty_v1
-               WHERE model_id=? AND policy_revision=? AND decision='novel'
-                 AND vector IS NOT NULL AND document_key<>?""",
-            (self.model_id, POLICY_REVISION, exclude)
-        )
-        # Disk-streaming O(N) search: no full vector library in unified RAM.
-        # At the current 12.8k-doc scale this avoids requiring a new ANN
-        # dependency; index acceleration can be benchmarked separately.
+        if title is None:
+            cursor = self.db.execute(
+                """SELECT document_key,vector,dimensions,body_excerpt,markers,title
+                   FROM novelty_v1
+                   WHERE model_id=? AND policy_revision=? AND decision='novel'
+                     AND vector IS NOT NULL AND document_key<>?""",
+                (self.model_id, POLICY_REVISION, exclude))
+        else:
+            title_key = normalized_title_key(title)
+            if not title_key:
+                return []
+            cursor = self.db.execute(
+                """SELECT document_key,vector,dimensions,body_excerpt,markers,title
+                   FROM novelty_v1
+                   WHERE model_id=? AND policy_revision=? AND decision='novel'
+                     AND title_key=? AND vector IS NOT NULL AND document_key<>?""",
+                (self.model_id, POLICY_REVISION, title_key, exclude))
         for key, raw, dimensions, excerpt, markers, headline in cursor:
             if dimensions != vector.size:
                 continue
@@ -229,12 +254,7 @@ class NoveltyIndex:
             similarity = float(np.dot(prior, vector))
             if similarity >= 0.84:
                 matches.append((similarity, key, excerpt, markers, headline))
-                # Avoid crowding out an exact-title original with five
-                # different-city same-template documents in TOP_K.
-                matches.sort(key=lambda x: (
-                    -int(title is not None and
-                         title_supports_semantic_reuse(title, x[4])),
-                    -x[0], x[1]))
+                matches.sort(key=lambda row: (-row[0], row[1]))
                 if len(matches) > TOP_K:
                     matches.pop()
         return matches
@@ -249,6 +269,7 @@ class NoveltyIndex:
         # until the *new* inference finishes and can commit atomically.
         sha = hashlib.sha256(body.encode()).hexdigest()
         stored_title = str(title)[:500]
+        title_key = normalized_title_key(stored_title)
         already = self.db.execute(
             """SELECT body_sha256,title,decision,match_key,similarity,coverage,reason
                FROM novelty_v1 WHERE document_key=? AND model_id=?""",
@@ -263,9 +284,9 @@ class NoveltyIndex:
             old = self.db.execute(
                 """SELECT document_key FROM novelty_v1
                    WHERE model_id=? AND policy_revision=? AND decision='novel'
-                     AND body_sha256=? AND title=?
+                     AND body_sha256=? AND title_key=?
                      AND document_key<>? LIMIT 1""",
-                (self.model_id, POLICY_REVISION, sha, stored_title, key)
+                (self.model_id, POLICY_REVISION, sha, title_key, key)
             ).fetchone()
         decision, match_key, score, coverage = "novel", None, None, None
         reason = "NO_EQUIVALENT_EVIDENCE"
@@ -276,6 +297,8 @@ class NoveltyIndex:
         incomplete = incomplete_source_reason(body)
         if incomplete:
             decision, reason = "review_required", incomplete
+        elif not title_key:
+            decision, reason = "review_required", "MISSING_HEADLINE"
         elif visible_body_length(body) < MIN_VISIBLE_BODY_CHARS:
             decision, reason = "review_required", "INSUFFICIENT_EXTRACTED_BODY"
         elif old:
@@ -376,14 +399,14 @@ class NoveltyIndex:
                   vector.astype("<f4").tobytes() if vector is not None else None,
                   int(vector.size) if vector is not None else None,
                   decision, match_key, score, coverage, reason,
-                  POLICY_REVISION, match_sha)
+                  POLICY_REVISION, match_sha, title_key)
         with self.db:
             self.db.execute(
                 """INSERT OR REPLACE INTO novelty_v1
                    (document_key,model_id,body_sha256,title,body_excerpt,markers,
                     vector,dimensions,decision,match_key,similarity,coverage,
-                    reason,policy_revision,match_body_sha256)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    reason,policy_revision,match_body_sha256,title_key)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 record
             )
         return dict(decision=decision, match_key=match_key,

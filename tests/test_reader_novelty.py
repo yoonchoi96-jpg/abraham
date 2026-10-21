@@ -630,3 +630,49 @@ def test_dry_run_connect_ex_cannot_bypass_paid_provider_guard(monkeypatch):
             sock.connect_ex(("api.deepseek.com", 443))
     finally:
         sock.close()
+
+
+
+def test_normalized_punctuation_headline_exact_body_keeps_dedup_fast(tmp_path):
+    db = sqlite3.connect(tmp_path / "titles-index.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    first = idx.assess("one", "Paris—night curfew", FIRST, embed)
+    second = idx.assess("two", "Paris - night curfew", FIRST, embed)
+    assert first["decision"] == "novel"
+    assert second["decision"] == "exact_duplicate"
+    assert second["match_key"] == "one"
+    assert embed.count == 1
+    db.close()
+
+
+def test_empty_title_never_becomes_an_equivalent_evidence_source(tmp_path):
+    db = sqlite3.connect(tmp_path / "notitle.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    a = idx.assess("a", "", FIRST, FakeEmbed())
+    b = idx.assess("b", "", FIRST, FakeEmbed())
+    assert a["reason"] == b["reason"] == "MISSING_HEADLINE"
+    assert b["match_key"] is None
+    db.close()
+
+
+def test_v8_title_index_excludes_other_language_same_topic(tmp_path):
+    db = sqlite3.connect(tmp_path / "multilang-retrieval.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    first = idx.assess("es", "El acuerdo fue confirmado", FIRST, embed)
+    second = idx.assess("pt", "O acordo foi confirmado", REPHRASE, embed)
+    assert first["decision"] == "novel"
+    assert second["decision"] == "novel"
+    assert second["match_key"] is None
+    assert idx._top_matches(normalized_embedding(embed([FIRST])[0]),
+                            exclude="none", title="O acordo foi confirmado") == []
+    plan = db.execute("""EXPLAIN QUERY PLAN
+        SELECT document_key,vector FROM novelty_v1
+        WHERE model_id=? AND policy_revision=? AND decision='novel'
+          AND title_key=? AND vector IS NOT NULL AND document_key<>?""",
+        ("local-embed-v1", __import__("scripts.reader_novelty",
+                                     fromlist=["POLICY_REVISION"]).POLICY_REVISION,
+         "o acordo foi confirmado", "none")).fetchall()
+    assert any("novelty_v1_titlekey" in row[3] for row in plan)
+    db.close()
