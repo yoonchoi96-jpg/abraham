@@ -20,3 +20,6 @@ vault/
 .reader-private/
 .promptfoo/
 *.safetensors
+
+# DeepSeek provider usage metadata contains operational private history
+90_Dashboard/auto_reports/ai_usage.jsonl
