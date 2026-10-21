@@ -501,3 +501,48 @@ def test_dry_run_denies_remote_egress_and_erases_provider_secrets(monkeypatch):
             sock.connect(("127.0.0.1", 443))
     finally:
         sock.close()
+
+
+def test_reader_partial_import_is_never_exact_duplicate(tmp_path):
+    """An identical extracted fragment does not prove complete article identity."""
+    db = sqlite3.connect(tmp_path / "partial-import.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    fragment = (
+        "A publisher's substantial article paragraph about advanced "
+        "industrial manufacturing processes and current procurement."
+        "\n\nSome content could not be imported from the original document."
+    )
+    first = idx.assess("origin", "Manufacturing", fragment, FakeEmbed())
+    second = idx.assess("copy", "Manufacturing", fragment, FakeEmbed())
+    assert first["decision"] == "review_required"
+    assert second["decision"] == "review_required"
+    assert first["reason"] == second["reason"] == "INCOMPLETE_SOURCE_CONTENT"
+    assert second["match_key"] is None
+    assert idx.evidence_cards("copy", FakeEmbed())["state"] == "not_redundancy_candidate"
+    db.close()
+
+
+def test_identical_paywall_previews_remain_review_only(tmp_path):
+    db = sqlite3.connect(tmp_path / "preview.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    teaser = ("The article examines five difficult choices facing the leader "
+              "after a year of economic uncertainty. "
+              "Subscribe to continue reading.")
+    a = idx.assess("a", "Five challenges for the leader", teaser, FakeEmbed())
+    b = idx.assess("b", "Five challenges for the leader", teaser, FakeEmbed())
+    assert a["decision"] == "review_required"
+    assert b["decision"] == "review_required"
+    assert b["match_key"] is None
+    db.close()
+
+
+def test_valid_duplicate_does_not_chain_via_duplicate_source(tmp_path):
+    db = sqlite3.connect(tmp_path / "chain.sqlite")
+    idx = NoveltyIndex(db, model_id="local-embed-v1")
+    embed = FakeEmbed()
+    idx.assess("original", "Manufacturing", FIRST, embed)
+    d2 = idx.assess("duplicate", "Manufacturing", FIRST, embed)
+    d3 = idx.assess("third", "Manufacturing", FIRST, embed)
+    assert d2["decision"] == d3["decision"] == "exact_duplicate"
+    assert d3["match_key"] == "original"
+    db.close()
