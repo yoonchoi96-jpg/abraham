@@ -81,3 +81,74 @@ Production gate:
 - Only after validated source-linked translated documents exist can an
   independent feature flag authorize translation reuse (NOT in this PR).
 - Keep no-new-cost and no-auto-GitHub-run policies; no workflow schedules changed.
+
+
+## Round 2: multi-source review, invalidation and measured-quality gate
+
+Commit series added to draft PR #20:
+
+- `NoveltyIndex` schema migration adds `policy_revision` and
+  `match_body_sha256` (a SHA-256 signature of the matched source body and
+  headline, not an unverified content claim). Old pre-policy rows are
+  re-assessed; cached similarity candidates are re-assessed when their matched
+  source headline/body changes. `scan()` now consults `index.is_current()`
+  rather than trusting an unchanged file SHA alone.
+- Full article headings participate in the critical number/quote/negation
+  guard and claim comparison. Exact-body duplicate status now requires an
+  identical stored headline as well.
+- Retrieval checks up to the five nearest candidates, rather than trusting
+  the first. Each potential redundant decision must have one *single* source
+  covering every candidate claim; claims from multiple sources are never
+  spliced into a fabricated merged witness. Current-article claim embeddings
+  are reused within an assessment.
+- `NoveltyIndex.evidence_cards(key, embed)` returns in-memory review-only
+  claim-to-literal-source-quote pairs, with local cosine scores and an
+  explicit non-entailment warning. Cards cannot be shown once the original
+  changes, and this method does not issue a paid request or write to Reader.
+- `python3 -m scripts.reader_novelty_eval` audits independently human-labeled
+  cases against the local private database. A false-skip *candidate* is any
+  novelty result that proposes a redundancy/exact duplicate for a case
+  independently labeled as novel. Risk-high counts and missing/stale decisions
+  are explicitly reported. Regardless of observed results, automatic
+  DeepSeek skip remains unauthorized.
+- Operators may now pass `--retry-held` to retry previously quarantined
+  local-inference items once in a bounded manual scan. This is not an
+  indefinite background retry loop. Successful retries clear their markers.
+
+Example private `human_gold.jsonl` (identifiers only, not article bodies):
+
+```jsonl
+{"document_key":"source-a","expected":"novel","risk":"high"}
+{"document_key":"source-b","expected":"redundant","risk":"normal"}
+```
+
+Read-only audit:
+
+```sh
+python3 -m scripts.reader_novelty_eval \
+  --db "$HOME/.abraham-reader-stage/reader-novelty.sqlite" \
+  --labels "$HOME/.abraham-reader-stage/human_gold.jsonl" \
+  --model EXISTING_MULTILINGUAL_EMBEDDING_MODEL \
+  --require-zero-false-skip
+```
+
+`--require-zero-false-skip` exits nonzero if the sample has a potential
+false-skip, missing/stale decisions, or fewer than 50 distinct labeled cases.
+It is a **necessary screening check**, never proof that AI skips are safe.
+
+For manual hold recovery, run the earlier `reader_novelty_scan` command
+with `--retry-held`; do not disable GearShift to make a failed model fit.
+`ABRAHAM_NOVELTY_CHUNKED_EMBEDDINGS=0` continues to hold large articles
+rather than reverting to unsafe truncated embeddings.
+
+**Current verification boundary:** Source/test patches are committed and
+a draft PR is open; the repository's GitHub Actions remain manual-only,
+and no remote runner or Mac model is accessible from this chat. The new
+test cases have *not* been executed against the repository checkout.
+Do not infer any actual true-positive/false-positive rate or monetary
+savings from the synthetic fixtures. The next independent run needs
+the 50+ human-verified samples and current Mac/GearShift telemetry.
+
+**Central GearShift stays unchanged:** AMANDO is absent from the accessible
+GitHub repositories. A local scheduler cannot permissibly override
+ownership, audio priorities, real memory pressure or existing leases.
