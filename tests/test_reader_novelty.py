@@ -840,3 +840,29 @@ def test_advisory_backfill_reuses_v8_embeddings_without_ollama_calls(tmp_path):
     assert idx.review.backfill(max_rows=10)["review_buckets_backfilled"]==0
     assert idx.is_current("fr")
     db.close()
+
+
+
+def test_local_embed_cache_does_not_store_guard_rejected_result(tmp_path):
+    class Http:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def read(self): return json.dumps({"embeddings":[[1.0]*16]}).encode()
+    gear=Mock()
+    gear.check.side_effect=[None,Held("MEMORY_ADMISSION_REJECTED"),None,None]
+    calls=[]
+    def network(req,timeout):
+        calls.append(req)
+        return Http()
+    with patch("scripts.reader_novelty_scan.GearShift",return_value=gear), \
+         patch("scripts.reader_novelty_scan.budget_for",
+               return_value={"required_increment_bytes":5}), \
+         patch("scripts.reader_novelty_scan.urllib.request.urlopen",
+               side_effect=network):
+        emb=GuardedLocalEmbedder("test-postguard",str(tmp_path))
+        with pytest.raises(Held,match="MEMORY_ADMISSION_REJECTED"):
+            emb(["A multilingual text fragment for protected inference."])
+        assert len(emb._chunk_cache)==0
+        emb(["A multilingual text fragment for protected inference."])
+        assert len(calls)==2
+        assert emb.last_call_stats["cache_hits"]==0

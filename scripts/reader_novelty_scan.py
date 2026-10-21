@@ -162,10 +162,12 @@ class GuardedLocalEmbedder:
             # All unique misses retain deterministic order across FIFO batches.
             keys_batch = [key for key, _ in misses
                           if key not in vectors_by_key][:len(batch)]
+            # Never cache a result until GearShift post-admission succeeds:
+            # an overloaded model must not become a silent cache bypass.
+            self.gear.check(budget, owned=self.model)
             for key, vec in zip(keys_batch, normalized):
                 vectors_by_key[key] = vec
                 self._remember(key, vec)
-            self.gear.check(budget, owned=self.model)
             requests += 1
             self.total_stats["local_requests"] += 1
         vectors = [vectors_by_key[key] for key in keys]
