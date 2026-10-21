@@ -266,6 +266,63 @@ class NoveltyIndex:
         return dict(decision=decision, match_key=match_key,
                     similarity=score, coverage=coverage, reason=reason)
 
+    def evidence_cards(self, key: str,
+                       embed: Callable[[list[str]], list[list[float]]]) -> dict:
+        """Read-only claim→source comparison for human review.
+
+        Similarity is a retrieval clue, NOT textual entailment or authorization
+        to skip translation. Quotes are literal excerpts from the persisted
+        parsed source. Any stale origin makes this view unavailable.
+        """
+        if not self.is_current(key):
+            return {"state": "stale_or_missing", "cards": []}
+        row = self.db.execute(
+            """SELECT title,body_excerpt,decision,match_key FROM novelty_v1
+               WHERE document_key=? AND model_id=?""", (key, self.model_id)
+        ).fetchone()
+        if not row or row[2] != "redundancy_candidate" or not row[3]:
+            return {"state": "not_redundancy_candidate", "cards": []}
+        source = self.db.execute(
+            """SELECT title,body_excerpt FROM novelty_v1
+               WHERE document_key=? AND model_id=?""", (row[3], self.model_id)
+        ).fetchone()
+        if not source:
+            return {"state": "stale_or_missing", "cards": []}
+        current_text = row[0] + "\n" + row[1]
+        source_text = source[0] + "\n" + source[1]
+        current_claims = claims_from_text(current_text)
+        source_claims = claims_from_text(source_text)
+        if (not current_claims or not source_claims or
+            len(current_claims) > MAX_CLAIMS or len(source_claims) > MAX_CLAIMS or
+            any(len(c) > MAX_CLAIM_CHARS for c in current_claims + source_claims)):
+            return {"state": "review_required", "cards": []}
+        vectors = embed(current_claims + source_claims)
+        if len(vectors) != len(current_claims) + len(source_claims):
+            raise ValueError("EMBEDDING_COUNT_MISMATCH")
+        norm = [normalized_embedding(v) for v in vectors]
+        sizes = {x.size for x in norm}
+        if len(sizes) != 1:
+            raise ValueError("EMBEDDING_DIMENSIONS_CHANGED")
+        query_vectors = np.stack(norm[:len(current_claims)])
+        source_vectors = np.stack(norm[len(current_claims):])
+        comparisons = query_vectors @ source_vectors.T
+        cards = []
+        for position, claim in enumerate(current_claims):
+            match_index = int(np.argmax(comparisons[position]))
+            quote = source_claims[match_index]
+            if quote not in source_text:
+                raise ValueError("SOURCE_QUOTE_NOT_FOUND")
+            cards.append({
+                "claim": claim,
+                "source_quote": quote,
+                "cosine_similarity": round(float(comparisons[position, match_index]), 6),
+                "candidate_match": bool(comparisons[position, match_index] >= 0.96),
+                "source_document_key": row[3],
+            })
+        return {"state": "review_candidate_only", "document_key": key,
+                "match_key": row[3], "cards": cards,
+                "inference": "local_embedding_similarity_not_factual_entailment"}
+
     def counts(self) -> dict:
         return dict(self.db.execute(
             "SELECT decision, COUNT(*) FROM novelty_v1 WHERE model_id=? GROUP BY decision",
