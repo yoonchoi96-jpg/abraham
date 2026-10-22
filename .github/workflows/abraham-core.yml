@@ -225,6 +225,28 @@ jobs:
           echo "Abraham core failed, but partial SQLite state was persisted safely."
           exit 1
 
+      - name: Kakao self-notification (opt-in)
+        if: always()
+        continue-on-error: true
+        env:
+          KAKAO_NOTIFY_ENABLED: ${{ vars.KAKAO_NOTIFY_ENABLED }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+          KAKAO_LINK_URL: ${{ vars.KAKAO_LINK_URL }}
+          ABRAHAM_STEP_OUTCOME: ${{ steps.abraham.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "${KAKAO_NOTIFY_ENABLED:-}" != "true" ]; then
+            echo "Kakao notifications disabled; skipping."
+            exit 0
+          fi
+          if [ -z "${KAKAO_REST_API_KEY:-}" ] || [ -z "${KAKAO_REFRESH_TOKEN:-}" ] || [ -z "${KAKAO_LINK_URL:-}" ]; then
+            echo "Kakao credentials/link not configured; skipping."
+            exit 0
+          fi
+          python3 scripts/kakao_notify.py --event "${ABRAHAM_STEP_OUTCOME:-unknown}" --send
+
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
