@@ -1,0 +1,21 @@
+{
+  "run_id": "2026-10-22T0919KST",
+  "timezone": "Asia/Seoul",
+  "feed_unseen_observed": 5765,
+  "previous_observed": 5757,
+  "observed_delta": 8,
+  "delta_unique_ids_not_verified": true,
+  "drive_seed_children": 4,
+  "export_id": "1906cbdf72834fa399ab8d1abdc3f3da",
+  "export_status": "completed",
+  "export_progress": "0/0",
+  "zip_download": "BLOCKED_DNS",
+  "new_grade_writes": 0,
+  "reader_tag_writes": 0,
+  "reader_seen_writes": 0,
+  "abraham_receipts": 0,
+  "nav_qa": 0,
+  "obsidian_writes": 0,
+  "checkpoint_advanced": false,
+  "overall": "INCOMPLETE"
+}
