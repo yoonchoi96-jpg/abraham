@@ -102,7 +102,7 @@ class IntakeTests(unittest.TestCase):
             engine.close()
 
     def test_exact_hash_and_color_gates(self):
-        archive = self.archive([("a.json", record("a", "Body\n")),
+        archive = self.archive([("a.json", record("a", "Body\n", tags=["rating/blue"])),
             ("b.json", record("b", "Body \n", tags=["rating/white"])),
             ("c.json", record("c", "Third", tags=["rating/orange", "rating/red"]))])
         engine = self.engine()
@@ -118,7 +118,7 @@ class IntakeTests(unittest.TestCase):
         doc = m.parse_document("article.md", b"---\nid: abc\nurl: https://example.invalid/a?version=1\ntags: [orange]\n---\nText\n")
         self.assertEqual(doc["reader_id"], "abc")
         self.assertEqual(doc["content"], "Text\n")
-        self.assertEqual(doc["admission"], "selected")
+        self.assertEqual(doc["admission"], "held")  # Orange is retained, not canonical-admitted.
         self.assertNotEqual(m.canonical_url("https://example.invalid/a?version=1"),
                             m.canonical_url("https://example.invalid/a?version=2"))
         doc = m.parse_document("article.html", b"<p>Hello<script>secret()</script></p>")
