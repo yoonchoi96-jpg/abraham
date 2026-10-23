@@ -641,11 +641,11 @@ def run_cloud():
             return
         # Preserve the untouched ZIP before any new state becomes discoverable.
         required = archive.stat().st_size + sum(
-            (Path(work)/name).stat().st_size for name in result["shards"] + ["issues.jsonl.gz", "index.sqlite"])
+            (Path(work)/name).stat().st_size for name in result["shards"] + [result["issues_file"], "index.sqlite"])
         drive.require_capacity(required + 1024 * 1024)
         source_id = drive.upload(archive, folder, "source")
         files = []
-        for name in result["shards"] + ["issues.jsonl.gz"]:
+        for name in result["shards"] + [result["issues_file"]]:
             files.append({"name": name, "id": drive.upload(Path(work)/name, folder, "canonical" if name in result["shards"] else "quarantine"),
                           "sha256": digest_file(Path(work)/name)})
         index = Path(work) / "index.sqlite"
@@ -660,7 +660,9 @@ def run_cloud():
         manifest_path.write_bytes(json_bytes(manifest))
         # Commit marker last. Failures never replace the previous canonical index.
         drive.upload(manifest_path, folder, "commit")
-        print(json.dumps({"event": "reader_intake", "status": "committed",
+        print(json.dumps({"event": "reader_intake",
+                          "status": "staged_complete" if result["archive_complete"] else "staged_partial",
+                          "archive_complete": result["archive_complete"],
                           "archive_bytes": result["archive_bytes"], "stats": result["stats"],
                           "translation_calls": 0, "infrastructure_cost": 0}))
 
