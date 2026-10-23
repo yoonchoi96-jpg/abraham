@@ -3,6 +3,7 @@ name: Reader intake zero-cost validation
   pull_request:
     paths:
       - "scripts/reader_intake*.py"
+      - "tests/test_reader_*.py"
       - ".github/workflows/reader-intake*.yml"
   workflow_dispatch:
 permissions:
