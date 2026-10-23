@@ -175,6 +175,61 @@ def parse_document(name, payload):
             "source_language": str(meta.get("language") or meta.get("source_language") or ""),
             "rating": color, "admission": "selected" if color in COLORS else "held"}
 
+# Rating ledger is an immutable, verified input. Old RAW tags are not authoritative.
+LEDGER_HASH_SCOPE = "trimmed_utf8_body_v1"
+
+def load_verified_rating_ledger(path):
+    """Load verified JSONL. Reject ambiguous provenance, duplicate IDs, and unknown hash scopes."""
+    records = {}
+    with Path(path).open("r", encoding="utf-8") as source:
+        for line in source:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+                rid = item["reader_id"]
+                body_hash = item["body_sha256"]
+                run_id = item.get("run_id") or item.get("source_run_id")
+                grade = normalize_rating_tag(item["grade"])
+                verified = item.get("reader_tag_verified") is True and item.get("reader_drive_body_exact_match") is True
+                if (not isinstance(rid, str) or not rid or
+                        not isinstance(body_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", body_hash) or
+                        not isinstance(run_id, str) or not run_id or
+                        item.get("hash_scope") != LEDGER_HASH_SCOPE or
+                        grade not in ALL_COLORS or not verified):
+                    raise ValueError("INVALID_VERIFIED_RATING_LEDGER")
+                record = {"body_sha256": body_hash, "rating": grade, "run_id": run_id}
+                if rid in records and records[rid] != record:
+                    raise ValueError("CONFLICTING_VERIFIED_RATING_LEDGER")
+                records[rid] = record
+            except (KeyError, TypeError, json.JSONDecodeError):
+                raise ValueError("INVALID_VERIFIED_RATING_LEDGER") from None
+    if not records:
+        raise ValueError("EMPTY_VERIFIED_RATING_LEDGER")
+    return records
+
+def apply_verified_rating(doc, ledger):
+    """Fail closed unless document ID, verified body hash and rating agree."""
+    raw_rating = doc["rating"]
+    doc["rating"] = None
+    doc["admission"] = "held"
+    doc["rating_verification"] = "MISSING_VERIFIED_LEDGER_ENTRY"
+    entry = ledger.get(doc["reader_id"])
+    if entry is None:
+        return doc
+    body_hash = hashlib.sha256(doc["content"].strip().encode("utf-8")).hexdigest()
+    if body_hash != entry["body_sha256"]:
+        doc["rating_verification"] = "VERIFIED_LEDGER_BODY_HASH_MISMATCH"
+        return doc
+    if raw_rating is not None and raw_rating != entry["rating"]:
+        doc["rating_verification"] = "VERIFIED_LEDGER_RAW_RATING_CONFLICT"
+        return doc
+    doc["rating"] = entry["rating"]
+    doc["admission"] = "selected" if entry["rating"] in COLORS else "held"
+    doc["rating_verification"] = "VERIFIED_LEDGER_MATCH"
+    doc["rating_run_id"] = entry["run_id"]
+    return doc
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS docs(
  body_hash TEXT PRIMARY KEY, canonical_id TEXT UNIQUE NOT NULL,
@@ -199,7 +254,7 @@ class Intake:
         if self.db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise RuntimeError("INVALID_PRIOR_STATE")
 
-    def run(self, archive):
+    def run(self, archive, rating_ledger=None):
         archive = Path(archive)
         if archive.stat().st_size > MAX_ARCHIVE:
             raise RuntimeError("ARCHIVE_LIMIT_EXCEEDED")
@@ -238,6 +293,8 @@ class Intake:
                         if len(payload) > MAX_TEXT:
                             raise ValueError("TEXT_MEMBER_TOO_LARGE")
                         doc = parse_document(info.filename, payload)
+                        if rating_ledger is not None:
+                            doc = apply_verified_rating(doc, rating_ledger)
                         if not doc["content"].strip():
                             stats["deferred_no_fulltext"] += 1
                             issues.write(json_bytes({"member": member_key, "reason": "DEFERRED_NO_FULLTEXT"}).decode()+"\n")
@@ -270,7 +327,10 @@ class Intake:
                                           "body_sha256": body_hash, "archive_sha256": sha,
                                           "member_sha256": member_key, "source_language": doc["source_language"]},
                                       "tags": doc["tags"], "rating": doc["rating"],
-                                      "admission": doc["admission"], "translation_ko": "",
+                                      "admission": doc["admission"],
+                                      "rating_verification": doc.get("rating_verification", "UNVERIFIED_RAW_ONLY"),
+                                      "rating_run_id": doc.get("rating_run_id"),
+                                      "translation_ko": "",
                                       "entities": [], "relations": []}
                             line = json_bytes(record) + b"\n"
                             writer.write(line)
@@ -529,6 +589,15 @@ def run_cloud():
             drive.get_media(previous["index"]["id"], state)
             if digest_file(state) != previous["index"]["sha256"]:
                 raise RuntimeError("PRIOR_STATE_CHECKSUM_MISMATCH")
+        ledger_id = os.getenv("READER_VERIFIED_RATING_LEDGER_FILE_ID", "").strip()
+        if not ledger_id:
+            raise RuntimeError("VERIFIED_RATING_LEDGER_REQUIRED")
+        ledger_path = Path(work) / "verified-rating-ledger.jsonl"
+        drive.get_media(ledger_id, ledger_path)
+        try:
+            rating_ledger = load_verified_rating_ledger(ledger_path)
+        except ValueError:
+            raise RuntimeError("INVALID_VERIFIED_RATING_LEDGER") from None
         source_doc = os.getenv("READER_REQUEST_DOC_ID", "")
         source_request = drive.source_request(source_doc) if source_doc else None
         archive = (download_zip(source_request["download_url"], work)
@@ -537,7 +606,7 @@ def run_cloud():
             raise RuntimeError("INSUFFICIENT_EPHEMERAL_DISK")
         engine = Intake(work, state)
         try:
-            result = engine.run(archive)
+            result = engine.run(archive, rating_ledger=rating_ledger)
         finally:
             engine.close()
         if result["archive_already_complete"]:
