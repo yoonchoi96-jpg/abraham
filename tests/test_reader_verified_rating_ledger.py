@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -93,3 +94,18 @@ def test_conflicting_duplicate_ids_rejected(tmp_path):
 def test_empty_ledger_rejected(tmp_path):
     with pytest.raises(ValueError, match="EMPTY_VERIFIED_RATING_LEDGER"):
         load(tmp_path, [])
+
+def test_archive_with_missing_verified_grade_cannot_commit(tmp_path):
+    archive = tmp_path / "source.zip"
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("article.md", (
+            "---\\nid: another-reader-id\\ntitle: Article\\ntags: []\\n---\\n" + BODY
+        ))
+    ledger = load(tmp_path, [row()])
+    engine = intake.Intake(tmp_path / "work")
+    try:
+        with pytest.raises(RuntimeError, match="VERIFIED_LEDGER_COVERAGE_INCOMPLETE"):
+            engine.run(archive, rating_ledger=ledger)
+        assert engine.db.execute("SELECT COUNT(*) FROM archives").fetchone()[0] == 0
+    finally:
+        engine.close()
