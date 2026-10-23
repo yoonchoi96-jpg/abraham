@@ -50,6 +50,7 @@ jobs:
           READWISE_TOKEN: ${{ secrets.READWISE_TOKEN }}
           READER_EXPORT_ID: ${{ inputs.export_id }}
           READER_DRIVE_FOLDER_ID: ${{ vars.READER_DRIVE_FOLDER_ID }}
+          READER_VERIFIED_RATING_LEDGER_FILE_ID: ${{ vars.READER_VERIFIED_RATING_LEDGER_FILE_ID }}
         run: python3 scripts/reader_intake.py --cloud
       - name: Remove ephemeral authentication
         if: always()
