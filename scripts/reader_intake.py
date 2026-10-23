@@ -33,8 +33,40 @@ MAX_TEXT = 32 * CHUNK
 MAX_ARCHIVE = 12 * 1024**3
 MAX_EXPANDED = 128 * 1024**3
 MAX_MEMBERS = 250_000
-COLORS = {"orange", "yellow", "green", "blue", "navy", "purple", "gold"}
-ALL_COLORS = COLORS | {"white", "red"}
+COLORS = {"blue", "navy", "purple", "gold"}
+ALL_COLORS = COLORS | {"white", "red", "orange", "yellow", "green"}
+RATING_ALIASES = {
+    "white": "white", "하양": "white", "흰색": "white",
+    "red": "red", "빨강": "red", "빨간색": "red",
+    "orange": "orange", "주황": "orange", "주황색": "orange",
+    "yellow": "yellow", "노랑": "yellow", "노란색": "yellow",
+    "green": "green", "초록": "green", "초록색": "green",
+    "blue": "blue", "파랑": "blue", "파란색": "blue",
+    "navy": "navy", "남색": "navy",
+    "purple": "purple", "보라": "purple", "보라색": "purple",
+    "gold": "gold", "golden": "gold", "금색": "gold", "골드": "gold",
+}
+RATING_EMOJIS = {
+    "⚪": "white", "🔴": "red", "🟠": "orange",
+    "🟡": "yellow", "🟢": "green", "🔵": "blue",
+    "🟦": "navy", "🟣": "purple", "🟨": "gold",
+}
+
+def normalize_rating_tag(tag):
+    """Accept exact legacy English or Korean/emoji rating tags, not topic tags."""
+    value = str(tag).strip().lower().replace("\ufe0f", "")
+    parts = re.split(r"[/#:]", value)
+    if len(parts) > 1 and parts[0].strip() not in {"등급", "rating", "grade", "color", "colour"}:
+        return None
+    token = re.sub(r"\\s+", "", parts[-1])
+    for emoji, color in RATING_EMOJIS.items():
+        if token.startswith(emoji):
+            rest = token[len(emoji):]
+            if not rest or RATING_ALIASES.get(rest) == color:
+                return color
+            return None
+    return RATING_ALIASES.get(token)
+
 
 def json_bytes(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -135,11 +167,7 @@ def parse_document(name, payload):
     if not isinstance(tags, list):
         tags = []
     tags = [str(x) for x in tags]
-    colors = set()
-    for tag in tags:
-        token = re.split(r"[/#:]", tag.lower())[-1].strip()
-        if token in ALL_COLORS:
-            colors.add(token)
+    colors = {color for tag in tags if (color := normalize_rating_tag(tag))}
     color = next(iter(colors)) if len(colors) == 1 else None
     title = str(meta.get("title") or PurePosixPath(name).stem)
     return {"reader_id": str(rid) if rid is not None else None,
