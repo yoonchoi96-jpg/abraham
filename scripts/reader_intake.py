@@ -295,6 +295,11 @@ class Intake:
                         doc = parse_document(info.filename, payload)
                         if rating_ledger is not None:
                             doc = apply_verified_rating(doc, rating_ledger)
+                            if doc["rating_verification"] != "VERIFIED_LEDGER_MATCH":
+                                # Do not index, commit, or permanently hold a document whose
+                                # current verified grade/hash is missing or contradictory.
+                                # The entire archive remains replayable after ledger repair.
+                                raise RuntimeError("VERIFIED_LEDGER_COVERAGE_INCOMPLETE")
                         if not doc["content"].strip():
                             stats["deferred_no_fulltext"] += 1
                             issues.write(json_bytes({"member": member_key, "reason": "DEFERRED_NO_FULLTEXT"}).decode()+"\n")
