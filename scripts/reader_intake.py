@@ -360,8 +360,10 @@ class Intake:
                             "UNSUPPORTED_JSON_DOCUMENT"} else type(exc).__name__
                         issues.write(json_bytes({"member": member_key, "reason": reason}).decode()+"\n")
                         stats["quarantined"] += 1
-                    if stats["members"] % 1000 == 0:
-                        self.db.commit()
+                # Finish gzip streams before committing references to their shards.
+                if writer:
+                    writer.close()
+                    writer = None
                 # A partially verified or quarantined ZIP is never recorded as complete.
                 archive_complete = not any(stats[key] for key in (
                     "pending_verified_ledger", "deferred_no_fulltext", "quarantined"))
@@ -369,6 +371,15 @@ class Intake:
                     self.db.execute("INSERT INTO archives VALUES(?,?,?)",
                                     (sha, archive.stat().st_size, datetime.now(timezone.utc).isoformat()))
                 self.db.commit()
+            except Exception:
+                # No DB row may survive pointing at an incomplete shard.
+                if writer:
+                    writer.close()
+                    writer = None
+                self.db.rollback()
+                for name in shards:
+                    (self.work / name).unlink(missing_ok=True)
+                raise
             finally:
                 if writer:
                     writer.close()
