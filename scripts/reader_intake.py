@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,8 +34,40 @@ MAX_TEXT = 32 * CHUNK
 MAX_ARCHIVE = 12 * 1024**3
 MAX_EXPANDED = 128 * 1024**3
 MAX_MEMBERS = 250_000
-COLORS = {"orange", "yellow", "green", "blue", "navy", "purple", "gold"}
-ALL_COLORS = COLORS | {"white", "red"}
+COLORS = {"blue", "navy", "purple", "gold"}
+ALL_COLORS = COLORS | {"white", "red", "orange", "yellow", "green"}
+RATING_ALIASES = {
+    "white": "white", "하양": "white", "흰색": "white",
+    "red": "red", "빨강": "red", "빨간색": "red",
+    "orange": "orange", "주황": "orange", "주황색": "orange",
+    "yellow": "yellow", "노랑": "yellow", "노란색": "yellow",
+    "green": "green", "초록": "green", "초록색": "green",
+    "blue": "blue", "파랑": "blue", "파란색": "blue",
+    "navy": "navy", "남색": "navy",
+    "purple": "purple", "보라": "purple", "보라색": "purple",
+    "gold": "gold", "golden": "gold", "금색": "gold", "골드": "gold",
+}
+RATING_EMOJIS = {
+    "⚪": "white", "🔴": "red", "🟠": "orange",
+    "🟡": "yellow", "🟢": "green", "🔵": "blue",
+    "🟦": "navy", "🟣": "purple", "🟨": "gold",
+}
+
+def normalize_rating_tag(tag):
+    """Accept exact legacy English or Korean/emoji rating tags, not topic tags."""
+    value = str(tag).strip().lower().replace("\ufe0f", "")
+    parts = re.split(r"[/#:]", value)
+    if len(parts) > 1 and parts[0].strip() not in {"등급", "rating", "grade", "color", "colour"}:
+        return None
+    token = re.sub(r"\s+", "", parts[-1])
+    for emoji, color in RATING_EMOJIS.items():
+        if token.startswith(emoji):
+            rest = token[len(emoji):]
+            if not rest or RATING_ALIASES.get(rest) == color:
+                return color
+            return None
+    return RATING_ALIASES.get(token)
+
 
 def json_bytes(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
@@ -135,17 +168,68 @@ def parse_document(name, payload):
     if not isinstance(tags, list):
         tags = []
     tags = [str(x) for x in tags]
-    colors = set()
-    for tag in tags:
-        token = re.split(r"[/#:]", tag.lower())[-1].strip()
-        if token in ALL_COLORS:
-            colors.add(token)
+    colors = {color for tag in tags if (color := normalize_rating_tag(tag))}
     color = next(iter(colors)) if len(colors) == 1 else None
     title = str(meta.get("title") or PurePosixPath(name).stem)
     return {"reader_id": str(rid) if rid is not None else None,
             "url": url, "title": title, "content": text, "tags": tags,
             "source_language": str(meta.get("language") or meta.get("source_language") or ""),
             "rating": color, "admission": "selected" if color in COLORS else "held"}
+
+# Rating ledger is an immutable, verified input. Old RAW tags are not authoritative.
+LEDGER_HASH_SCOPE = "trimmed_utf8_body_v1"
+
+def load_verified_rating_ledger(path):
+    """Load verified JSONL. Reject ambiguous provenance, duplicate IDs, and unknown hash scopes."""
+    records = {}
+    with Path(path).open("r", encoding="utf-8") as source:
+        for line in source:
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+                rid = item["reader_id"]
+                body_hash = item["body_sha256"]
+                run_id = item.get("run_id") or item.get("source_run_id")
+                grade = normalize_rating_tag(item["grade"])
+                verified = item.get("reader_tag_verified") is True and item.get("reader_drive_body_exact_match") is True
+                if (not isinstance(rid, str) or not rid or
+                        not isinstance(body_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", body_hash) or
+                        not isinstance(run_id, str) or not run_id or
+                        item.get("hash_scope") != LEDGER_HASH_SCOPE or
+                        grade not in ALL_COLORS or not verified):
+                    raise ValueError("INVALID_VERIFIED_RATING_LEDGER")
+                record = {"body_sha256": body_hash, "rating": grade, "run_id": run_id}
+                if rid in records and records[rid] != record:
+                    raise ValueError("CONFLICTING_VERIFIED_RATING_LEDGER")
+                records[rid] = record
+            except (KeyError, TypeError, json.JSONDecodeError):
+                raise ValueError("INVALID_VERIFIED_RATING_LEDGER") from None
+    if not records:
+        raise ValueError("EMPTY_VERIFIED_RATING_LEDGER")
+    return records
+
+def apply_verified_rating(doc, ledger):
+    """Fail closed unless document ID, verified body hash and rating agree."""
+    raw_rating = doc["rating"]
+    doc["rating"] = None
+    doc["admission"] = "held"
+    doc["rating_verification"] = "MISSING_VERIFIED_LEDGER_ENTRY"
+    entry = ledger.get(doc["reader_id"])
+    if entry is None:
+        return doc
+    body_hash = hashlib.sha256(doc["content"].strip().encode("utf-8")).hexdigest()
+    if body_hash != entry["body_sha256"]:
+        doc["rating_verification"] = "VERIFIED_LEDGER_BODY_HASH_MISMATCH"
+        return doc
+    if raw_rating is not None and raw_rating != entry["rating"]:
+        doc["rating_verification"] = "VERIFIED_LEDGER_RAW_RATING_CONFLICT"
+        return doc
+    doc["rating"] = entry["rating"]
+    doc["admission"] = "selected" if entry["rating"] in COLORS else "held"
+    doc["rating_verification"] = "VERIFIED_LEDGER_MATCH"
+    doc["rating_run_id"] = entry["run_id"]
+    return doc
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS docs(
@@ -171,7 +255,7 @@ class Intake:
         if self.db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise RuntimeError("INVALID_PRIOR_STATE")
 
-    def run(self, archive):
+    def run(self, archive, rating_ledger=None):
         archive = Path(archive)
         if archive.stat().st_size > MAX_ARCHIVE:
             raise RuntimeError("ARCHIVE_LIMIT_EXCEEDED")
@@ -181,7 +265,8 @@ class Intake:
             return {"archive_sha256": sha, "archive_bytes": archive.stat().st_size,
                     "archive_already_complete": True, "stats": {}, "shards": []}
         shards, writer, uncompressed = [], None, 0
-        issues_path = self.work / "issues.jsonl.gz"
+        attempt = uuid.uuid4().hex
+        issues_path = self.work / f"issues-{sha[:16]}-{attempt}.jsonl.gz"
         with zipfile.ZipFile(archive) as z, gzip.open(issues_path, "wt", encoding="utf-8") as issues:
             members = z.infolist()
             if len(members) > MAX_MEMBERS or sum(x.file_size for x in members) > MAX_EXPANDED:
@@ -210,6 +295,17 @@ class Intake:
                         if len(payload) > MAX_TEXT:
                             raise ValueError("TEXT_MEMBER_TOO_LARGE")
                         doc = parse_document(info.filename, payload)
+                        if rating_ledger is not None:
+                            doc = apply_verified_rating(doc, rating_ledger)
+                            if doc["rating_verification"] != "VERIFIED_LEDGER_MATCH":
+                                # Document-scoped deferral: no unverified content enters the DB,
+                                # while verified peers may advance without completing the ZIP.
+                                stats["pending_verified_ledger"] += 1
+                                issues.write(json_bytes({
+                                    "member": member_key,
+                                    "reason": doc["rating_verification"],
+                                }).decode() + "\n")
+                                continue
                         if not doc["content"].strip():
                             stats["deferred_no_fulltext"] += 1
                             issues.write(json_bytes({"member": member_key, "reason": "DEFERRED_NO_FULLTEXT"}).decode()+"\n")
@@ -230,7 +326,7 @@ class Intake:
                             if writer is None or uncompressed >= 32 * CHUNK:
                                 if writer:
                                     writer.close()
-                                name = f"canonical-{sha[:16]}-{len(shards):05d}.jsonl.gz"
+                                name = f"canonical-{sha[:16]}-{attempt}-{len(shards):05d}.jsonl.gz"
                                 shards.append(name)
                                 writer = gzip.open(self.work / name, "wb")
                                 uncompressed = 0
@@ -242,7 +338,10 @@ class Intake:
                                           "body_sha256": body_hash, "archive_sha256": sha,
                                           "member_sha256": member_key, "source_language": doc["source_language"]},
                                       "tags": doc["tags"], "rating": doc["rating"],
-                                      "admission": doc["admission"], "translation_ko": "",
+                                      "admission": doc["admission"],
+                                      "rating_verification": doc.get("rating_verification", "UNVERIFIED_RAW_ONLY"),
+                                      "rating_run_id": doc.get("rating_run_id"),
+                                      "translation_ko": "",
                                       "entities": [], "relations": []}
                             line = json_bytes(record) + b"\n"
                             writer.write(line)
@@ -261,16 +360,32 @@ class Intake:
                             "UNSUPPORTED_JSON_DOCUMENT"} else type(exc).__name__
                         issues.write(json_bytes({"member": member_key, "reason": reason}).decode()+"\n")
                         stats["quarantined"] += 1
-                    if stats["members"] % 1000 == 0:
-                        self.db.commit()
-                self.db.execute("INSERT INTO archives VALUES(?,?,?)",
-                                (sha, archive.stat().st_size, datetime.now(timezone.utc).isoformat()))
+                # Finish gzip streams before committing references to their shards.
+                if writer:
+                    writer.close()
+                    writer = None
+                # A partially verified or quarantined ZIP is never recorded as complete.
+                archive_complete = not any(stats[key] for key in (
+                    "pending_verified_ledger", "deferred_no_fulltext", "quarantined"))
+                if archive_complete:
+                    self.db.execute("INSERT INTO archives VALUES(?,?,?)",
+                                    (sha, archive.stat().st_size, datetime.now(timezone.utc).isoformat()))
                 self.db.commit()
+            except Exception:
+                # No DB row may survive pointing at an incomplete shard.
+                if writer:
+                    writer.close()
+                    writer = None
+                self.db.rollback()
+                for name in shards:
+                    (self.work / name).unlink(missing_ok=True)
+                raise
             finally:
                 if writer:
                     writer.close()
         return {"archive_sha256": sha, "archive_bytes": archive.stat().st_size,
-                "archive_already_complete": False, "stats": dict(stats), "shards": shards}
+                "archive_already_complete": False, "archive_complete": archive_complete,
+                "stats": dict(stats), "shards": shards, "issues_file": issues_path.name}
 
     def close(self):
         self.db.close()
@@ -501,6 +616,15 @@ def run_cloud():
             drive.get_media(previous["index"]["id"], state)
             if digest_file(state) != previous["index"]["sha256"]:
                 raise RuntimeError("PRIOR_STATE_CHECKSUM_MISMATCH")
+        ledger_id = os.getenv("READER_VERIFIED_RATING_LEDGER_FILE_ID", "").strip()
+        if not ledger_id:
+            raise RuntimeError("VERIFIED_RATING_LEDGER_REQUIRED")
+        ledger_path = Path(work) / "verified-rating-ledger.jsonl"
+        drive.get_media(ledger_id, ledger_path)
+        try:
+            rating_ledger = load_verified_rating_ledger(ledger_path)
+        except ValueError:
+            raise RuntimeError("INVALID_VERIFIED_RATING_LEDGER") from None
         source_doc = os.getenv("READER_REQUEST_DOC_ID", "")
         source_request = drive.source_request(source_doc) if source_doc else None
         archive = (download_zip(source_request["download_url"], work)
@@ -509,7 +633,7 @@ def run_cloud():
             raise RuntimeError("INSUFFICIENT_EPHEMERAL_DISK")
         engine = Intake(work, state)
         try:
-            result = engine.run(archive)
+            result = engine.run(archive, rating_ledger=rating_ledger)
         finally:
             engine.close()
         if result["archive_already_complete"]:
@@ -517,11 +641,11 @@ def run_cloud():
             return
         # Preserve the untouched ZIP before any new state becomes discoverable.
         required = archive.stat().st_size + sum(
-            (Path(work)/name).stat().st_size for name in result["shards"] + ["issues.jsonl.gz", "index.sqlite"])
+            (Path(work)/name).stat().st_size for name in result["shards"] + [result["issues_file"], "index.sqlite"])
         drive.require_capacity(required + 1024 * 1024)
         source_id = drive.upload(archive, folder, "source")
         files = []
-        for name in result["shards"] + ["issues.jsonl.gz"]:
+        for name in result["shards"] + [result["issues_file"]]:
             files.append({"name": name, "id": drive.upload(Path(work)/name, folder, "canonical" if name in result["shards"] else "quarantine"),
                           "sha256": digest_file(Path(work)/name)})
         index = Path(work) / "index.sqlite"
@@ -536,7 +660,9 @@ def run_cloud():
         manifest_path.write_bytes(json_bytes(manifest))
         # Commit marker last. Failures never replace the previous canonical index.
         drive.upload(manifest_path, folder, "commit")
-        print(json.dumps({"event": "reader_intake", "status": "committed",
+        print(json.dumps({"event": "reader_intake",
+                          "status": "staged_complete" if result["archive_complete"] else "staged_partial",
+                          "archive_complete": result["archive_complete"],
                           "archive_bytes": result["archive_bytes"], "stats": result["stats"],
                           "translation_calls": 0, "infrastructure_cost": 0}))
 
