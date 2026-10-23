@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -264,7 +265,8 @@ class Intake:
             return {"archive_sha256": sha, "archive_bytes": archive.stat().st_size,
                     "archive_already_complete": True, "stats": {}, "shards": []}
         shards, writer, uncompressed = [], None, 0
-        issues_path = self.work / "issues.jsonl.gz"
+        attempt = uuid.uuid4().hex
+        issues_path = self.work / f"issues-{sha[:16]}-{attempt}.jsonl.gz"
         with zipfile.ZipFile(archive) as z, gzip.open(issues_path, "wt", encoding="utf-8") as issues:
             members = z.infolist()
             if len(members) > MAX_MEMBERS or sum(x.file_size for x in members) > MAX_EXPANDED:
@@ -296,10 +298,14 @@ class Intake:
                         if rating_ledger is not None:
                             doc = apply_verified_rating(doc, rating_ledger)
                             if doc["rating_verification"] != "VERIFIED_LEDGER_MATCH":
-                                # Do not index, commit, or permanently hold a document whose
-                                # current verified grade/hash is missing or contradictory.
-                                # The entire archive remains replayable after ledger repair.
-                                raise RuntimeError("VERIFIED_LEDGER_COVERAGE_INCOMPLETE")
+                                # Document-scoped deferral: no unverified content enters the DB,
+                                # while verified peers may advance without completing the ZIP.
+                                stats["pending_verified_ledger"] += 1
+                                issues.write(json_bytes({
+                                    "member": member_key,
+                                    "reason": doc["rating_verification"],
+                                }).decode() + "\n")
+                                continue
                         if not doc["content"].strip():
                             stats["deferred_no_fulltext"] += 1
                             issues.write(json_bytes({"member": member_key, "reason": "DEFERRED_NO_FULLTEXT"}).decode()+"\n")
@@ -320,7 +326,7 @@ class Intake:
                             if writer is None or uncompressed >= 32 * CHUNK:
                                 if writer:
                                     writer.close()
-                                name = f"canonical-{sha[:16]}-{len(shards):05d}.jsonl.gz"
+                                name = f"canonical-{sha[:16]}-{attempt}-{len(shards):05d}.jsonl.gz"
                                 shards.append(name)
                                 writer = gzip.open(self.work / name, "wb")
                                 uncompressed = 0
@@ -356,14 +362,19 @@ class Intake:
                         stats["quarantined"] += 1
                     if stats["members"] % 1000 == 0:
                         self.db.commit()
-                self.db.execute("INSERT INTO archives VALUES(?,?,?)",
-                                (sha, archive.stat().st_size, datetime.now(timezone.utc).isoformat()))
+                # A partially verified or quarantined ZIP is never recorded as complete.
+                archive_complete = not any(stats[key] for key in (
+                    "pending_verified_ledger", "deferred_no_fulltext", "quarantined"))
+                if archive_complete:
+                    self.db.execute("INSERT INTO archives VALUES(?,?,?)",
+                                    (sha, archive.stat().st_size, datetime.now(timezone.utc).isoformat()))
                 self.db.commit()
             finally:
                 if writer:
                     writer.close()
         return {"archive_sha256": sha, "archive_bytes": archive.stat().st_size,
-                "archive_already_complete": False, "stats": dict(stats), "shards": shards}
+                "archive_already_complete": False, "archive_complete": archive_complete,
+                "stats": dict(stats), "shards": shards, "issues_file": issues_path.name}
 
     def close(self):
         self.db.close()
