@@ -58,7 +58,7 @@ def normalize_rating_tag(tag):
     parts = re.split(r"[/#:]", value)
     if len(parts) > 1 and parts[0].strip() not in {"등급", "rating", "grade", "color", "colour"}:
         return None
-    token = re.sub(r"\\s+", "", parts[-1])
+    token = re.sub(r"\s+", "", parts[-1])
     for emoji, color in RATING_EMOJIS.items():
         if token.startswith(emoji):
             rest = token[len(emoji):]
