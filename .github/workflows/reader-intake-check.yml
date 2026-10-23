@@ -24,8 +24,12 @@ jobs:
           persist-credentials: false
       - name: Install safe metadata parser
         run: python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+      - name: Install pinned test runner
+        run: python3 -m pip install --disable-pip-version-check pytest==8.4.2
+      - name: Verify nine-color, ledger join and partial replay regressions
+        run: python3 -m pytest -q tests/test_reader_intake_colors.py tests/test_reader_verified_rating_ledger.py
       - name: Verify deduplication, isolation, source preservation and guards
         run: python3 scripts/reader_intake_test.py
-      - name: Process real synthetic ZIP larger than 3 GiB and rerun it
+      - name: Process real synthetic ZIP larger than 3 GiB with fail-closed deferrals
         run: python3 scripts/reader_intake_test.py --large
       # No cache, artifact upload, dataset commits, cloud resources, or AI secrets.
