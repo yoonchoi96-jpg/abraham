@@ -95,17 +95,49 @@ def test_empty_ledger_rejected(tmp_path):
     with pytest.raises(ValueError, match="EMPTY_VERIFIED_RATING_LEDGER"):
         load(tmp_path, [])
 
-def test_archive_with_missing_verified_grade_cannot_commit(tmp_path):
+def test_partial_verified_archive_replays_without_overwriting_shards(tmp_path):
+    import gzip
+
+    other_id = "01mtestverifieddocument00000002"
+    other_body = "A second distinct article with its own verified body."
     archive = tmp_path / "source.zip"
     with zipfile.ZipFile(archive, "w") as z:
-        z.writestr("article.md", (
-            "---\\nid: another-reader-id\\ntitle: Article\\ntags: []\\n---\\n" + BODY
-        ))
-    ledger = load(tmp_path, [row()])
+        z.writestr("one.md", (
+            f"---\\nid: {DOC_ID}\\ntitle: First\\ntags: []\\n---\\n" + BODY
+        ).replace("\\n", "\n"))
+        z.writestr("two.md", (
+            f"---\\nid: {other_id}\\ntitle: Second\\ntags: []\\n---\\n" + other_body
+        ).replace("\\n", "\n"))
+
+    partial_ledger = load(tmp_path, [row()])
     engine = intake.Intake(tmp_path / "work")
     try:
-        with pytest.raises(RuntimeError, match="VERIFIED_LEDGER_COVERAGE_INCOMPLETE"):
-            engine.run(archive, rating_ledger=ledger)
+        first = engine.run(archive, rating_ledger=partial_ledger)
+        assert first["archive_complete"] is False
+        assert first["stats"]["canonical_new"] == 1
+        assert first["stats"]["pending_verified_ledger"] == 1
+        assert engine.db.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 1
         assert engine.db.execute("SELECT COUNT(*) FROM archives").fetchone()[0] == 0
+        first_shard = engine.work / first["shards"][0]
+        assert first_shard.exists()
+        first_bytes = first_shard.read_bytes()
+        with gzip.open(engine.work / first["issues_file"], "rt") as f:
+            issues = [json.loads(line) for line in f]
+        assert [i["reason"] for i in issues] == ["MISSING_VERIFIED_LEDGER_ENTRY"]
+
+        complete_ledger = load(tmp_path, [
+            row(), row(body=other_body, reader_id=other_id, grade="등급/🟦남색"),
+        ])
+        second = engine.run(archive, rating_ledger=complete_ledger)
+        assert second["archive_complete"] is True
+        assert second["stats"]["canonical_new"] == 1
+        assert second["stats"]["duplicate_body"] == 1
+        assert second["stats"]["pending_verified_ledger"] == 0
+        assert first_shard.read_bytes() == first_bytes
+        assert first["shards"][0] != second["shards"][0]
+        assert engine.db.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 2
+        assert engine.db.execute("SELECT COUNT(*) FROM archives").fetchone()[0] == 1
+        third = engine.run(archive, rating_ledger=complete_ledger)
+        assert third["archive_already_complete"] is True
     finally:
         engine.close()
