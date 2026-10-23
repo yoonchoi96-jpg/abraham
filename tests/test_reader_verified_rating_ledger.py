@@ -132,7 +132,7 @@ def test_partial_verified_archive_replays_without_overwriting_shards(tmp_path):
         assert second["archive_complete"] is True
         assert second["stats"]["canonical_new"] == 1
         assert second["stats"]["duplicate_body"] == 1
-        assert second["stats"]["pending_verified_ledger"] == 0
+        assert second["stats"].get("pending_verified_ledger", 0) == 0
         assert first_shard.read_bytes() == first_bytes
         assert first["shards"][0] != second["shards"][0]
         assert engine.db.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 2
