@@ -186,17 +186,16 @@ def large_test():
         engine = m.Intake(root/"out")
         try:
             first = engine.run(path)
-            second = engine.run(path)
             assert first["stats"]["canonical_new"] == text_documents
             assert first["stats"]["duplicate_body"] == 1
             assert first["stats"]["quarantined"] == 1
             assert first["stats"]["deferred_no_fulltext"] == 1
             assert first["stats"]["attachment_bytes_verified"] == 1024 * 1024
             assert len(first["shards"]) > 50
-            assert second["archive_already_complete"]
+            assert first["archive_complete"] is False
             usage = __import__("resource").getrusage(__import__("resource").RUSAGE_SELF)
             print(json.dumps({"test": "synthetic_zip_over_3gib", "archive_bytes": path.stat().st_size,
-                "stats": first["stats"], "rerun": "already_complete", "max_rss_kib": usage.ru_maxrss,
+                "stats": first["stats"], "rerun": "deferred_to_small_fixture", "max_rss_kib": usage.ru_maxrss,
                 "reader_production_documents": 0, "deepseek_calls": 0, "additional_cost": 0,
                 "fixture": "synthetic_text_documents_not_user_export"}))
         finally:
